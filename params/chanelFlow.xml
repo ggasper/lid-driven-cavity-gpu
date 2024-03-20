@@ -1,0 +1,22 @@
+<params>
+    <num h="0.02"
+         cfl="10"
+         support_size_factor="2"
+         mon_order="2"
+         phs_order="3"
+         max_p_iter="100"
+         max_divergence="0.1"
+    />
+    <sys num_threads="4"
+    />
+    <case dim="2"
+          Re="1000"
+          seed="123"
+          end_time="50"
+    />
+    <output use_xml_name="0"
+            hdf5_name="results.h5"
+            clear_hdf5="1"
+            printout_interval="10"
+    />
+</params>
