@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(lid_driven_gpu)
+project(lid_driven_gpu LANGUAGES CXX)
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin)
 
@@ -29,5 +29,12 @@ function(register name)
     target_link_libraries(${name} medusa hdf5 gomp)
     target_compile_options(${name} PRIVATE -fopenmp -std=c++17 -O3)
 endfunction(register)
-
+function(registerCuda name)
+    add_executable(${name} src/${name}.cpp)
+    target_link_libraries(${name} medusa hdf5 gomp cusparse cudart cusolver)
+    target_compile_options(${name} PRIVATE -fopenmp -std=c++17 -O3)
+    # set_target_properties(${name} PROPERTIES CUDA_ARCHITECTURES "80")
+endfunction(registerCuda)
+message("${CMAKE_CUDA_STANDARD}")
 register(lidDriven)
+registerCuda(lidDrivenGPU)
