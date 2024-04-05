@@ -1,6 +1,7 @@
 #include <iostream>
 #include <medusa/Medusa.hpp>
 #include <Eigen/SparseLU>
+#include <time.h>
 
 #define EPS 1e-10
 
@@ -25,6 +26,7 @@ class LidDriven {
 
         scal_t dt = cfl * h / dim;
 
+        clock_t start_time = clock();
         BoxShape<vec_t> box(vec_t::Zero(), vec_t::Constant(1));
         DomainDiscretization<vec_t> domain = box.discretizeBoundaryWithStep(h);
         GeneralFill<vec_t> fill;
@@ -175,6 +177,7 @@ class LidDriven {
         hdf_out.openGroup("/");
         hdf_out.writeEigen("velocity", u);
         hdf_out.writeEigen("pressure", p);
+        hdf_out.writeDoubleAttribute("time", static_cast<double>(clock() - start_time) / CLOCKS_PER_SEC);
         hdf_out.close();
     }
 };

@@ -33,8 +33,12 @@
 
 # Extra folders
 build/
-results.h5
+*.h5
 bin/
+params/benchmark/
 
 # vscode
 .vscode
+
+# python
+.venv
