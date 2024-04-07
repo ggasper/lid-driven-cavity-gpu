@@ -5,7 +5,7 @@
 #include <cuda_runtime_api.h>
 #include <cusparse.h>
 #include <cusolverSp.h>
-#include <time.h>
+#include <chrono>
 
 #define EPS 1e-10
 
@@ -27,8 +27,7 @@ class LidDriven {
 
         scal_t dt = cfl * h / dim;
 
-        clock_t start_time = clock();
-        clock_t preprocessing_start = clock();
+        const auto start{std::chrono::steady_clock::now()};
         BoxShape<vec_t> box(vec_t::Zero(), vec_t::Constant(1));
         DomainDiscretization<vec_t> domain = box.discretizeBoundaryWithStep(h);
         GeneralFill<vec_t> fill;
@@ -102,9 +101,6 @@ class LidDriven {
         // set the sum of all values
         rhs_p[N] = 0.0;
         M_p.makeCompressed();
-        double preprocessing_time =
-            static_cast<double>(clock() - preprocessing_start) / CLOCKS_PER_SEC;
-        clock_t lu_start = clock();
         std::cout << "Problem size: " << M_p.rows() << " " << M_p.cols()
                   << ", nonzeros: " << M_p.nonZeros() << std::endl;
         Eigen::SparseLU<Eigen::SparseMatrix<double>> solver_p;
@@ -113,7 +109,6 @@ class LidDriven {
             std::cout << "LU factorization failed with error:" << solver_p.lastErrorMessage()
                       << std::endl;
         }
-        double lu_time = static_cast<double>(clock() - lu_start) / CLOCKS_PER_SEC;
 
         // Prepare CUDA
         cusparseHandle_t cusparse_handle;
@@ -130,13 +125,10 @@ class LidDriven {
         auto printout_interval = param_file.get<int>("output.printout_interval");
         auto max_p_iter = param_file.get<int>("num.max_p_iter");
         auto div_limit = param_file.get<scal_t>("num.max_divergence");
+        int num_print = end_time/(dt * printout_interval);
+        Eigen::VectorXd max_u_y(num_print);
         int iteration = 0;
-        double M_u_construct_time = 0;
-        double M_u_solve_time = 0;
-        double PV_construction_time = 0;
-        double PV_solve_time = 0;
         while (t < end_time) {
-            clock_t M_u_start = clock();
             Eigen::SparseMatrix<double, Eigen::RowMajor> M_u(dim * N, dim * N);
             Eigen::VectorXd rhs_u(dim * N);
             rhs_u.setZero();
@@ -162,9 +154,7 @@ class LidDriven {
             }
 
             M_u.makeCompressed();
-            M_u_construct_time += static_cast<double>(clock() - M_u_start) / CLOCKS_PER_SEC;
 
-            clock_t M_u_solve_start = clock();
             //  Eigen::VectorXd solution = solver_u.solveWithGuess(rhs_u, u.asLinear());
             // Eigen::VectorXd solution = solver_u.solve(rhs_u);
             Eigen::VectorXd solution(M_u.rows());
@@ -172,23 +162,17 @@ class LidDriven {
             cusolverSpDcsrlsvluHost(cusolver_handle, M_u.rows(), M_u.nonZeros(), descrM_u,
                                     M_u.valuePtr(), M_u.outerIndexPtr(), M_u.innerIndexPtr(),
                                     rhs_u.data(), 1e-12, 1, solution.data(), &singularity);
-            if (singularity == -1) {
-                std::cout << "Singularity is -1" << std::endl;
+            if (singularity != -1) {
+                std::cout << "Singularity is " << singularity << std::endl;
             }
             u = VectorField<scal_t, dim>::fromLinear(solution);
-            M_u_solve_time += static_cast<double>(clock() - M_u_solve_start) / CLOCKS_PER_SEC;
             // P-V correction iteration -- PVI
             scal_t max_div = 0;
             for (int p_iter = 0; p_iter < max_p_iter; ++p_iter) {
-                clock_t PV_construction_start = clock();
                 // clock_t start_correction = clock();
                 for (int i : interior) rhs_p(i) = dt * op_e_v.div(u, i);
                 for (int i : boundary) rhs_p(i) = dt * u[i].dot(domain.normal(i));
-                PV_construction_time +=
-                    static_cast<double>(clock() - PV_construction_start) / CLOCKS_PER_SEC;
-                clock_t PV_solve_start = clock();
                 ScalarFieldd p_c = solver_p.solve(rhs_p).head(N);
-                PV_solve_time += static_cast<double>(clock() - PV_solve_start) / CLOCKS_PER_SEC;
                 // ScalarFieldd p_c = solver_cuda.solve(rhs_p);//.head(N);
                 p += p_c;
 
@@ -212,26 +196,24 @@ class LidDriven {
                         pos = domain.pos(i, 0);
                     }
                 }
+                int print_iter = (iteration - 1)/printout_interval;
+                max_u_y[print_iter] = max;
                 std::cout << iteration << " - t:" << t << " max u_y:" << max << " @ x:" << pos
                           << "  (max div:" << max_div << ")" << std::endl;
             }
         }
+        const auto end{std::chrono::steady_clock::now()};
+        const std::chrono::duration<double> elapsed_time{end - start};
 
         hdf_out.reopen();
         hdf_out.openGroup("/");
         hdf_out.writeEigen("velocity", u);
         hdf_out.writeEigen("pressure", p);
-        hdf_out.writeDoubleAttribute("time", static_cast<double>(clock() - start_time) / CLOCKS_PER_SEC);
+        hdf_out.writeDoubleAttribute("time", elapsed_time.count());
+        hdf_out.writeEigen("max_u_y", max_u_y);
         hdf_out.close();
         cusparseDestroy(cusparse_handle);
         cusolverSpDestroy(cusolver_handle);
-        std::cout << "Total time: " << static_cast<double>(clock() - start_time) / CLOCKS_PER_SEC;
-        std::cout << "  Preprocessing time: " << preprocessing_time << std::endl;
-        std::cout << "  LU time: " << lu_time << std::endl;
-        std::cout << "  M_u construct time: " << M_u_construct_time << std::endl;
-        std::cout << "  M_u solve time: " << M_u_solve_time << std::endl;
-        std::cout << "  PV construction time: " << PV_construction_time << std::endl;
-        std::cout << "  PV solve time: " << PV_solve_time << std::endl;
     }
 };
 

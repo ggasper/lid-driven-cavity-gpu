@@ -1,7 +1,7 @@
 #include <iostream>
 #include <medusa/Medusa.hpp>
 #include <Eigen/SparseLU>
-#include <time.h>
+#include <chrono>
 
 #define EPS 1e-10
 
@@ -26,7 +26,8 @@ class LidDriven {
 
         scal_t dt = cfl * h / dim;
 
-        clock_t start_time = clock();
+        const auto start{std::chrono::steady_clock::now()};
+
         BoxShape<vec_t> box(vec_t::Zero(), vec_t::Constant(1));
         DomainDiscretization<vec_t> domain = box.discretizeBoundaryWithStep(h);
         GeneralFill<vec_t> fill;
@@ -110,6 +111,8 @@ class LidDriven {
         auto printout_interval = param_file.get<int>("output.printout_interval");
         auto max_p_iter = param_file.get<int>("num.max_p_iter");
         auto div_limit = param_file.get<scal_t>("num.max_divergence");
+        int num_print = end_time/(dt * printout_interval);
+        Eigen::VectorXd max_u_y(num_print);
         int iteration = 0;
         while (t < end_time) {
             Eigen::SparseMatrix<double, Eigen::ColMajor> M_u(dim * N, dim * N);
@@ -168,16 +171,22 @@ class LidDriven {
                         pos = domain.pos(i, 0);
                     }
                 }
+                int print_iter = (iteration - 1)/printout_interval;
+                max_u_y[print_iter] = max;
                 std::cout << iteration << " - t:" << t << " max u_y:" << max << " @ x:" << pos
                           << "  (max div:" << max_div << ")" << std::endl;
             }
         }
 
+        const auto end{std::chrono::steady_clock::now()};
+        const std::chrono::duration<double> elapsed_time{end - start};
+
         hdf_out.reopen();
         hdf_out.openGroup("/");
         hdf_out.writeEigen("velocity", u);
         hdf_out.writeEigen("pressure", p);
-        hdf_out.writeDoubleAttribute("time", static_cast<double>(clock() - start_time) / CLOCKS_PER_SEC);
+        hdf_out.writeDoubleAttribute("time", elapsed_time.count());
+        hdf_out.writeEigen("max_u_y", max_u_y);
         hdf_out.close();
     }
 };
