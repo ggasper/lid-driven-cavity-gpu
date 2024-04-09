@@ -10,6 +10,54 @@
 #define EPS 1e-10
 
 using namespace mm;
+class SolverGPU {
+  public:
+    typedef double scal_t;
+    cusolverSpHandle_t cusolver_handle;
+    int m;
+    int nnz;
+    cusparseMatDescr_t descrA;
+
+    // Device pointers
+    scal_t* valuePtr;
+    int* rowPtr;
+    int* colInd;
+    scal_t* b;
+    scal_t* x;
+
+    SolverGPU(const Eigen::SparseMatrix<scal_t, Eigen::RowMajor>& A,
+              cusolverSpHandle_t cusolver_handle)
+        : cusolver_handle{cusolver_handle} {
+        m = A.rows();
+        nnz = A.nonZeros();
+        cudaMalloc((void**)&valuePtr, sizeof(scal_t) * nnz);
+        cudaMalloc((void**)&rowPtr, (m + 1) * sizeof(int));
+        cudaMalloc((void**)&colInd, sizeof(int) * nnz);
+        cudaMalloc((void**)&b, sizeof(scal_t) * m);
+        cudaMalloc((void**)&x, sizeof(scal_t) * m);
+        // Copy from host to device
+        cudaMemcpy(valuePtr, A.valuePtr(), nnz * sizeof(scal_t), cudaMemcpyHostToDevice);
+        cudaMemcpy(colInd, A.innerIndexPtr(), nnz * sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(rowPtr, A.outerIndexPtr(), (m + 1) * sizeof(int), cudaMemcpyHostToDevice);
+
+        cusparseCreateMatDescr(&descrA);
+        cusparseSetMatIndexBase(descrA, CUSPARSE_INDEX_BASE_ZERO);
+        cusparseSetMatType(descrA, CUSPARSE_MATRIX_TYPE_GENERAL);
+    }
+    Eigen::VectorXd solve(const Eigen::VectorXd& rhs) {
+        cudaMemcpy(b, rhs.data(), sizeof(scal_t) * m, cudaMemcpyHostToDevice);
+        int singularity = -1;
+        cusolverSpDcsrlsvqr(cusolver_handle, m, nnz, descrA, valuePtr, rowPtr, colInd, b, 1e-12, 1,
+                            x, &singularity);
+
+        if (singularity != -1) {
+            std::cout << "Singularity is " << singularity << std::endl;
+        }
+        Eigen::VectorXd solution(m);
+        cudaMemcpy(solution.data(), x, sizeof(scal_t) * m, cudaMemcpyDeviceToHost);
+        return solution;
+    }
+};
 template <int dim>
 class LidDriven {
   public:
@@ -115,17 +163,17 @@ class LidDriven {
         cusolverSpHandle_t cusolver_handle;
         cusparseCreate(&cusparse_handle);
         cusolverSpCreate(&cusolver_handle);
-        cusparseMatDescr_t descrM_u;
-        cusparseCreateMatDescr(&descrM_u);
-        cusparseSetMatIndexBase(descrM_u, CUSPARSE_INDEX_BASE_ZERO);
-        cusparseSetMatType(descrM_u, CUSPARSE_MATRIX_TYPE_GENERAL);
+        // cusparseMatDescr_t descrM_u;
+        // cusparseCreateMatDescr(&descrM_u);
+        // cusparseSetMatIndexBase(descrM_u, CUSPARSE_INDEX_BASE_ZERO);
+        // cusparseSetMatType(descrM_u, CUSPARSE_MATRIX_TYPE_GENERAL);
 
         scal_t t = 0;
         auto end_time = param_file.get<scal_t>("case.end_time");
         auto printout_interval = param_file.get<int>("output.printout_interval");
         auto max_p_iter = param_file.get<int>("num.max_p_iter");
         auto div_limit = param_file.get<scal_t>("num.max_divergence");
-        int num_print = end_time/(dt * printout_interval);
+        int num_print = end_time / (dt * printout_interval);
         Eigen::VectorXd max_u_y(num_print);
         int iteration = 0;
         while (t < end_time) {
@@ -157,14 +205,15 @@ class LidDriven {
 
             //  Eigen::VectorXd solution = solver_u.solveWithGuess(rhs_u, u.asLinear());
             // Eigen::VectorXd solution = solver_u.solve(rhs_u);
-            Eigen::VectorXd solution(M_u.rows());
-            int singularity = -1;
-            cusolverSpDcsrlsvluHost(cusolver_handle, M_u.rows(), M_u.nonZeros(), descrM_u,
-                                    M_u.valuePtr(), M_u.outerIndexPtr(), M_u.innerIndexPtr(),
-                                    rhs_u.data(), 1e-12, 1, solution.data(), &singularity);
-            if (singularity != -1) {
-                std::cout << "Singularity is " << singularity << std::endl;
-            }
+            SolverGPU solver_gpu(M_u, cusolver_handle);
+            Eigen::VectorXd solution = solver_gpu.solve(rhs_u);
+            // int singularity = -1;
+            // cusolverSpDcsrlsvluHost(cusolver_handle, M_u.rows(), M_u.nonZeros(), descrM_u,
+            //                         M_u.valuePtr(), M_u.outerIndexPtr(), M_u.innerIndexPtr(),
+            //                         rhs_u.data(), 1e-12, 1, solution.data(), &singularity);
+            // if (singularity != -1) {
+            //     std::cout << "Singularity is " << singularity << std::endl;
+            // }
             u = VectorField<scal_t, dim>::fromLinear(solution);
             // P-V correction iteration -- PVI
             scal_t max_div = 0;
@@ -196,7 +245,7 @@ class LidDriven {
                         pos = domain.pos(i, 0);
                     }
                 }
-                int print_iter = (iteration - 1)/printout_interval;
+                int print_iter = (iteration - 1) / printout_interval;
                 max_u_y[print_iter] = max;
                 std::cout << iteration << " - t:" << t << " max u_y:" << max << " @ x:" << pos
                           << "  (max div:" << max_div << ")" << std::endl;
