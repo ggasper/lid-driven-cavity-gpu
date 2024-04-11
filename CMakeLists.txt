@@ -1,18 +1,12 @@
 cmake_minimum_required(VERSION 3.16)
 project(lid_driven_gpu LANGUAGES CUDA CXX)
 
-set(CXX $ENV{CONDA_PREFIX}/bin/g++)
-set(CMAKE_CUDA_COMPILER $ENV{CONDA_PREFIX}/bin/nvcc)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin)
-set(HDF5_ROOT $ENV{CONDA_PREFIX})
 set(CMAKE_CXX_STANDARD 17)
 add_compile_options(-Wall -O3 -fopenmp)
 
 set(CMAKE_CUDA_ARCHITECTURES 86)
-#set(CMAKE_BUILD_TYPE Release)
 set(CMAKE_BUILD_TYPE Debug)
-# list(APPEND CMAKE_PREFIX_PATH "/home/ggolob/lid-driven-cavity-gpu/.conda/")
-set(CMAKE_PREFIX_PATH $ENV{CONDA_PREFIX})
 
 
 add_subdirectory($ENV{HOME}/medusa medusa)
@@ -22,6 +16,7 @@ include_directories($ENV{HOME}/libcudss-linux-x86_64-0.2.0.12_cuda12-archive/inc
 link_directories($ENV{HOME}/libcudss-linux-x86_64-0.2.0.12_cuda12-archive/lib)
 
 include_directories($ENV{HOME}/cusplibrary)
+
 # required due to weird hdf5 installation
 if (IS_DIRECTORY "/usr/include/hdf5/serial/")
     include_directories("/usr/include/hdf5/serial/")
@@ -43,7 +38,6 @@ function(registerCuda name)
     add_executable(${name} src/${name}.cu)
     target_link_libraries(${name} medusa hdf5 gomp cusparse cudart cusolver cudss)
     target_compile_options(${name} PRIVATE -fopenmp -std=c++17 -O3)
-    # set_target_properties(${name} PROPERTIES CUDA_ARCHITECTURES "80")
 endfunction(registerCuda)
 message("${CMAKE_CUDA_STANDARD}")
 register(lidDriven)

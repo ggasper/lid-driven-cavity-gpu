@@ -9,9 +9,6 @@
 #include <cusp/krylov/bicgstab.h>
 #include <cusp/krylov/gmres.h>
 #include <cusp/monitor.h>
-#include <cusp/print.h>
-#include <thrust/copy.h>
-#include <thrust/device_ptr.h>
 #include <chrono>
 
 #define EPS 1e-10
@@ -20,21 +17,18 @@ using namespace mm;
 class SolverGPU {
   public:
     typedef double scal_t;
-    cusolverSpHandle_t cusolver_handle;
     int m;
     int nnz;
-    cusparseMatDescr_t descrA;
 
     // Device pointers
     cusp::csr_matrix<int, scal_t, cusp::device_memory> A;
-    cusp::array1d<scal_t, cusp::device_memory> x; 
-    cusp::array1d<scal_t, cusp::device_memory> b; 
+    cusp::array1d<scal_t, cusp::device_memory> x;
+    cusp::array1d<scal_t, cusp::device_memory> b;
 
-    SolverGPU(const Eigen::SparseMatrix<scal_t, Eigen::RowMajor>& A_eig,
-              cusolverSpHandle_t cusolver_handle)
-        : cusolver_handle{cusolver_handle} {
+    SolverGPU(const Eigen::SparseMatrix<scal_t, Eigen::RowMajor>& A_eig) {
         m = A_eig.rows();
         nnz = A_eig.nonZeros();
+
         // Initialize matrix on device
         A.resize(m, m, nnz);
         for (int i = 0; i < nnz; ++i) {
@@ -47,13 +41,14 @@ class SolverGPU {
         x.resize(m);
     }
     Eigen::VectorXd solve(const Eigen::VectorXd& rhs) {
+        // Initialize b on device
         for (int i = 0; i < m; ++i) {
             b.push_back(rhs.coeff(i));
-        }    
-        // cusp::print(b);
+        }
         cusp::monitor<scal_t> monitor(b, 1000, 1e-10, 0, false);
         cusp::identity_operator<scal_t, cusp::device_memory> M(m, m);
         cusp::krylov::gmres(A, x, b, 50, monitor, M);
+
         Eigen::VectorXd solution(m);
         for (int i = 0; i < m; ++i) {
             solution[i] = x[i];
@@ -132,7 +127,6 @@ class LidDriven {
         auto op_e_s = storage.explicitOperators();
 
         // pressure correction matrix
-        // Eigen::SparseMatrix<scal_t, Eigen::ColMajor> M_p(N + 1, N + 1);
         Eigen::SparseMatrix<scal_t, Eigen::RowMajor> M_p(N + 1, N + 1);
         Eigen::VectorXd rhs_p(N + 1);
         rhs_p.setZero();
@@ -160,16 +154,6 @@ class LidDriven {
             std::cout << "LU factorization failed with error:" << solver_p.lastErrorMessage()
                       << std::endl;
         }
-
-        // Prepare CUDA
-        cusparseHandle_t cusparse_handle;
-        cusolverSpHandle_t cusolver_handle;
-        cusparseCreate(&cusparse_handle);
-        cusolverSpCreate(&cusolver_handle);
-        // cusparseMatDescr_t descrM_u;
-        // cusparseCreateMatDescr(&descrM_u);
-        // cusparseSetMatIndexBase(descrM_u, CUSPARSE_INDEX_BASE_ZERO);
-        // cusparseSetMatType(descrM_u, CUSPARSE_MATRIX_TYPE_GENERAL);
 
         scal_t t = 0;
         auto end_time = param_file.get<scal_t>("case.end_time");
@@ -206,26 +190,15 @@ class LidDriven {
 
             M_u.makeCompressed();
 
-            //  Eigen::VectorXd solution = solver_u.solveWithGuess(rhs_u, u.asLinear());
-            // Eigen::VectorXd solution = solver_u.solve(rhs_u);
-            SolverGPU solver_gpu(M_u, cusolver_handle);
+            SolverGPU solver_gpu(M_u);
             Eigen::VectorXd solution = solver_gpu.solve(rhs_u);
-            // int singularity = -1;
-            // cusolverSpDcsrlsvluHost(cusolver_handle, M_u.rows(), M_u.nonZeros(), descrM_u,
-            //                         M_u.valuePtr(), M_u.outerIndexPtr(), M_u.innerIndexPtr(),
-            //                         rhs_u.data(), 1e-12, 1, solution.data(), &singularity);
-            // if (singularity != -1) {
-            //     std::cout << "Singularity is " << singularity << std::endl;
-            // }
             u = VectorField<scal_t, dim>::fromLinear(solution);
             // P-V correction iteration -- PVI
             scal_t max_div = 0;
             for (int p_iter = 0; p_iter < max_p_iter; ++p_iter) {
-                // clock_t start_correction = clock();
                 for (int i : interior) rhs_p(i) = dt * op_e_v.div(u, i);
                 for (int i : boundary) rhs_p(i) = dt * u[i].dot(domain.normal(i));
                 ScalarFieldd p_c = solver_p.solve(rhs_p).head(N);
-                // ScalarFieldd p_c = solver_cuda.solve(rhs_p);//.head(N);
                 p += p_c;
 
 #pragma omp parallel for default(none) schedule(static) \
@@ -237,7 +210,6 @@ class LidDriven {
                 }
 
                 if (max_div < div_limit) break;
-                // std::cout << float(clock() - start_correction)/CLOCKS_PER_SEC << std::endl;
             }
             t += dt;
             if (++iteration % printout_interval == 0) {
@@ -264,8 +236,6 @@ class LidDriven {
         hdf_out.writeDoubleAttribute("time", elapsed_time.count());
         hdf_out.writeEigen("max_u_y", max_u_y);
         hdf_out.close();
-        cusparseDestroy(cusparse_handle);
-        cusolverSpDestroy(cusolver_handle);
     }
 };
 

@@ -19,9 +19,9 @@ class SolverGPU {
     cusparseMatDescr_t descrA;
 
     // Device pointers
-    scal_t* valuePtr;
-    int* rowPtr;
-    int* colInd;
+    scal_t* value_ptr;
+    int* row_ptr;
+    int* col_ind;
     scal_t* b;
     scal_t* x;
 
@@ -30,29 +30,32 @@ class SolverGPU {
         : cusolver_handle{cusolver_handle} {
         m = A.rows();
         nnz = A.nonZeros();
-        cudaMalloc((void**)&valuePtr, sizeof(scal_t) * nnz);
-        cudaMalloc((void**)&rowPtr, (m + 1) * sizeof(int));
-        cudaMalloc((void**)&colInd, sizeof(int) * nnz);
+        // Allocate space on device
+        cudaMalloc((void**)&value_ptr, sizeof(scal_t) * nnz);
+        cudaMalloc((void**)&row_ptr, (m + 1) * sizeof(int));
+        cudaMalloc((void**)&col_ind, sizeof(int) * nnz);
         cudaMalloc((void**)&b, sizeof(scal_t) * m);
         cudaMalloc((void**)&x, sizeof(scal_t) * m);
         // Copy from host to device
-        cudaMemcpy(valuePtr, A.valuePtr(), nnz * sizeof(scal_t), cudaMemcpyHostToDevice);
-        cudaMemcpy(colInd, A.innerIndexPtr(), nnz * sizeof(int), cudaMemcpyHostToDevice);
-        cudaMemcpy(rowPtr, A.outerIndexPtr(), (m + 1) * sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(value_ptr, A.valuePtr(), nnz * sizeof(scal_t), cudaMemcpyHostToDevice);
+        cudaMemcpy(col_ind, A.innerIndexPtr(), nnz * sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(row_ptr, A.outerIndexPtr(), (m + 1) * sizeof(int), cudaMemcpyHostToDevice);
 
+        // Setup cusparse data
         cusparseCreateMatDescr(&descrA);
         cusparseSetMatIndexBase(descrA, CUSPARSE_INDEX_BASE_ZERO);
         cusparseSetMatType(descrA, CUSPARSE_MATRIX_TYPE_GENERAL);
     }
     Eigen::VectorXd solve(const Eigen::VectorXd& rhs) {
         cudaMemcpy(b, rhs.data(), sizeof(scal_t) * m, cudaMemcpyHostToDevice);
-        int singularity = -1;
-        cusolverSpDcsrlsvqr(cusolver_handle, m, nnz, descrA, valuePtr, rowPtr, colInd, b, 1e-12, 1,
-                            x, &singularity);
 
+        int singularity = -1;
+        cusolverSpDcsrlsvqr(cusolver_handle, m, nnz, descrA, value_ptr, row_ptr, col_ind, b, 1e-12, 1,
+                            x, &singularity);
         if (singularity != -1) {
             std::cout << "Singularity is " << singularity << std::endl;
         }
+
         Eigen::VectorXd solution(m);
         cudaMemcpy(solution.data(), x, sizeof(scal_t) * m, cudaMemcpyDeviceToHost);
         return solution;
@@ -129,7 +132,6 @@ class LidDriven {
         auto op_e_s = storage.explicitOperators();
 
         // pressure correction matrix
-        // Eigen::SparseMatrix<scal_t, Eigen::ColMajor> M_p(N + 1, N + 1);
         Eigen::SparseMatrix<scal_t, Eigen::RowMajor> M_p(N + 1, N + 1);
         Eigen::VectorXd rhs_p(N + 1);
         rhs_p.setZero();
@@ -163,10 +165,6 @@ class LidDriven {
         cusolverSpHandle_t cusolver_handle;
         cusparseCreate(&cusparse_handle);
         cusolverSpCreate(&cusolver_handle);
-        // cusparseMatDescr_t descrM_u;
-        // cusparseCreateMatDescr(&descrM_u);
-        // cusparseSetMatIndexBase(descrM_u, CUSPARSE_INDEX_BASE_ZERO);
-        // cusparseSetMatType(descrM_u, CUSPARSE_MATRIX_TYPE_GENERAL);
 
         scal_t t = 0;
         auto end_time = param_file.get<scal_t>("case.end_time");
@@ -203,26 +201,15 @@ class LidDriven {
 
             M_u.makeCompressed();
 
-            //  Eigen::VectorXd solution = solver_u.solveWithGuess(rhs_u, u.asLinear());
-            // Eigen::VectorXd solution = solver_u.solve(rhs_u);
             SolverGPU solver_gpu(M_u, cusolver_handle);
             Eigen::VectorXd solution = solver_gpu.solve(rhs_u);
-            // int singularity = -1;
-            // cusolverSpDcsrlsvluHost(cusolver_handle, M_u.rows(), M_u.nonZeros(), descrM_u,
-            //                         M_u.valuePtr(), M_u.outerIndexPtr(), M_u.innerIndexPtr(),
-            //                         rhs_u.data(), 1e-12, 1, solution.data(), &singularity);
-            // if (singularity != -1) {
-            //     std::cout << "Singularity is " << singularity << std::endl;
-            // }
             u = VectorField<scal_t, dim>::fromLinear(solution);
             // P-V correction iteration -- PVI
             scal_t max_div = 0;
             for (int p_iter = 0; p_iter < max_p_iter; ++p_iter) {
-                // clock_t start_correction = clock();
                 for (int i : interior) rhs_p(i) = dt * op_e_v.div(u, i);
                 for (int i : boundary) rhs_p(i) = dt * u[i].dot(domain.normal(i));
                 ScalarFieldd p_c = solver_p.solve(rhs_p).head(N);
-                // ScalarFieldd p_c = solver_cuda.solve(rhs_p);//.head(N);
                 p += p_c;
 
 #pragma omp parallel for default(none) schedule(static) \
@@ -234,7 +221,6 @@ class LidDriven {
                 }
 
                 if (max_div < div_limit) break;
-                // std::cout << float(clock() - start_correction)/CLOCKS_PER_SEC << std::endl;
             }
             t += dt;
             if (++iteration % printout_interval == 0) {

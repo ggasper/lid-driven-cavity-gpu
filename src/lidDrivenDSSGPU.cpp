@@ -16,55 +16,59 @@ class SolverGPU {
     typedef double scal_t;
     cudaStream_t cuda_stream;
     cudssHandle_t handle;
-    cudssConfig_t solverConfig;
-    cudssData_t solverData;
+    cudssConfig_t solver_config;
+    cudssData_t solver_data;
     int m;
     int nnz;
     cudssMatrix_t A;
     cudssMatrixType_t mtype = CUDSS_MTYPE_GENERAL;
     cudssMatrixViewType_t mview = CUDSS_MVIEW_FULL;
     cudssIndexBase_t base = CUDSS_BASE_ZERO;
-    
+
     cudssMatrix_t x, b;
 
     // Device pointers
-    scal_t* valuePtr;
-    int* rowPtr;
-    int* colInd;
+    scal_t* value_ptr;
+    int* row_ptr;
+    int* col_ind;
     scal_t* b_values;
     scal_t* x_values;
 
     SolverGPU(const Eigen::SparseMatrix<scal_t, Eigen::RowMajor>& A_eig) {
-            //   cudssHandle_t handle, cudaStream_t cuda_stream) {
-        // : handle{handle}, cuda_stream{cuda_stream} {
+        // Initialize cuDSS
         cudssCreate(&handle);
         cudaStreamCreate(&cuda_stream);
         cudssSetStream(handle, cuda_stream);
+
         m = A_eig.rows();
         nnz = A_eig.nonZeros();
-        cudaMalloc((void**)&valuePtr, sizeof(scal_t) * nnz);
-        cudaMalloc((void**)&rowPtr, (m + 1) * sizeof(int));
-        cudaMalloc((void**)&colInd, sizeof(int) * nnz);
+
+        // Initialize the memory on the gpu
+        cudaMalloc((void**)&value_ptr, sizeof(scal_t) * nnz);
+        cudaMalloc((void**)&row_ptr, (m + 1) * sizeof(int));
+        cudaMalloc((void**)&col_ind, sizeof(int) * nnz);
         cudaMalloc((void**)&b_values, sizeof(scal_t) * m);
         cudaMalloc((void**)&x_values, sizeof(scal_t) * m);
         // Copy from host to device
-        cudaMemcpy(valuePtr, A_eig.valuePtr(), nnz * sizeof(scal_t), cudaMemcpyHostToDevice);
-        cudaMemcpy(colInd, A_eig.innerIndexPtr(), nnz * sizeof(int), cudaMemcpyHostToDevice);
-        cudaMemcpy(rowPtr, A_eig.outerIndexPtr(), (m + 1) * sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(value_ptr, A_eig.valuePtr(), nnz * sizeof(scal_t), cudaMemcpyHostToDevice);
+        cudaMemcpy(col_ind, A_eig.innerIndexPtr(), nnz * sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(row_ptr, A_eig.outerIndexPtr(), (m + 1) * sizeof(int), cudaMemcpyHostToDevice);
 
-        cudssConfigCreate(&solverConfig);
-        cudssDataCreate(handle, &solverData);
-        cudssMatrixCreateCsr(&A, m, m, nnz, rowPtr, nullptr, colInd, valuePtr, CUDA_R_32I, CUDA_R_64F, mtype, mview, base);
+        // Setup cuDSS
+        cudssConfigCreate(&solver_config);
+        cudssDataCreate(handle, &solver_data);
+        cudssMatrixCreateCsr(&A, m, m, nnz, row_ptr, nullptr, col_ind, value_ptr, CUDA_R_32I,
+                             CUDA_R_64F, mtype, mview, base);
     }
     ~SolverGPU() {
         cudssMatrixDestroy(A);
         cudssMatrixDestroy(b);
         cudssMatrixDestroy(x);
-        cudssDataDestroy(handle, solverData);
-        cudssConfigDestroy(solverConfig);
-        cudaFree(valuePtr);
-        cudaFree(rowPtr);
-        cudaFree(colInd);
+        cudssDataDestroy(handle, solver_data);
+        cudssConfigDestroy(solver_config);
+        cudaFree(value_ptr);
+        cudaFree(row_ptr);
+        cudaFree(col_ind);
         cudaFree(b_values);
         cudaFree(x_values);
         cudssDestroy(handle);
@@ -76,9 +80,9 @@ class SolverGPU {
         cudssMatrixCreateDn(&b, m, 1, m, b_values, CUDA_R_64F, CUDSS_LAYOUT_COL_MAJOR);
         cudssMatrixCreateDn(&x, m, 1, m, x_values, CUDA_R_64F, CUDSS_LAYOUT_COL_MAJOR);
 
-        cudssExecute(handle, CUDSS_PHASE_ANALYSIS, solverConfig, solverData, A, x, b);
-        cudssExecute(handle, CUDSS_PHASE_FACTORIZATION, solverConfig, solverData, A, x, b);
-        cudssExecute(handle, CUDSS_PHASE_SOLVE, solverConfig, solverData, A, x, b);
+        cudssExecute(handle, CUDSS_PHASE_ANALYSIS, solver_config, solver_data, A, x, b);
+        cudssExecute(handle, CUDSS_PHASE_FACTORIZATION, solver_config, solver_data, A, x, b);
+        cudssExecute(handle, CUDSS_PHASE_SOLVE, solver_config, solver_data, A, x, b);
 
         cudaStreamSynchronize(cuda_stream);
         Eigen::VectorXd solution(m);
@@ -157,7 +161,6 @@ class LidDriven {
         auto op_e_s = storage.explicitOperators();
 
         // pressure correction matrix
-        // Eigen::SparseMatrix<scal_t, Eigen::ColMajor> M_p(N + 1, N + 1);
         Eigen::SparseMatrix<scal_t, Eigen::RowMajor> M_p(N + 1, N + 1);
         Eigen::VectorXd rhs_p(N + 1);
         rhs_p.setZero();
@@ -185,17 +188,6 @@ class LidDriven {
             std::cout << "LU factorization failed with error:" << solver_p.lastErrorMessage()
                       << std::endl;
         }
-
-        // Prepare CUDA
-        // cudssHandle_t handle;
-        // cudaStream_t cuda_stream;
-        // cudssCreate(&handle);
-        // cudaStreamCreate(&cuda_stream);
-        // cudssSetStream(handle, cuda_stream);
-        // cusparseMatDescr_t descrM_u;
-        // cusparseCreateMatDescr(&descrM_u);
-        // cusparseSetMatIndexBase(descrM_u, CUSPARSE_INDEX_BASE_ZERO);
-        // cusparseSetMatType(descrM_u, CUSPARSE_MATRIX_TYPE_GENERAL);
 
         scal_t t = 0;
         auto end_time = param_file.get<scal_t>("case.end_time");
@@ -232,26 +224,15 @@ class LidDriven {
 
             M_u.makeCompressed();
 
-            //  Eigen::VectorXd solution = solver_u.solveWithGuess(rhs_u, u.asLinear());
-            // Eigen::VectorXd solution = solver_u.solve(rhs_u);
-            SolverGPU solver_gpu(M_u);//, handle, cuda_stream);
+            SolverGPU solver_gpu(M_u);
             Eigen::VectorXd solution = solver_gpu.solve(rhs_u);
-            // int singularity = -1;
-            // cusolverSpDcsrlsvluHost(cusolver_handle, M_u.rows(), M_u.nonZeros(), descrM_u,
-            //                         M_u.valuePtr(), M_u.outerIndexPtr(), M_u.innerIndexPtr(),
-            //                         rhs_u.data(), 1e-12, 1, solution.data(), &singularity);
-            // if (singularity != -1) {
-            //     std::cout << "Singularity is " << singularity << std::endl;
-            // }
             u = VectorField<scal_t, dim>::fromLinear(solution);
             // P-V correction iteration -- PVI
             scal_t max_div = 0;
             for (int p_iter = 0; p_iter < max_p_iter; ++p_iter) {
-                // clock_t start_correction = clock();
                 for (int i : interior) rhs_p(i) = dt * op_e_v.div(u, i);
                 for (int i : boundary) rhs_p(i) = dt * u[i].dot(domain.normal(i));
                 ScalarFieldd p_c = solver_p.solve(rhs_p).head(N);
-                // ScalarFieldd p_c = solver_cuda.solve(rhs_p);//.head(N);
                 p += p_c;
 
 #pragma omp parallel for default(none) schedule(static) \
@@ -263,7 +244,6 @@ class LidDriven {
                 }
 
                 if (max_div < div_limit) break;
-                // std::cout << float(clock() - start_correction)/CLOCKS_PER_SEC << std::endl;
             }
             t += dt;
             if (++iteration % printout_interval == 0) {
@@ -290,8 +270,6 @@ class LidDriven {
         hdf_out.writeDoubleAttribute("time", elapsed_time.count());
         hdf_out.writeEigen("max_u_y", max_u_y);
         hdf_out.close();
-        // cudssDestroy(handle);
-        // cudaStreamSynchronize(cuda_stream);
     }
 };
 
