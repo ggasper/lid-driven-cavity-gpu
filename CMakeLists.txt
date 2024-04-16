@@ -15,7 +15,7 @@ include_directories($ENV{HOME}/medusa/include/)
 include_directories($ENV{HOME}/libcudss-linux-x86_64-0.2.0.12_cuda12-archive/include)
 link_directories($ENV{HOME}/libcudss-linux-x86_64-0.2.0.12_cuda12-archive/lib)
 
-include_directories($ENV{HOME}/cusplibrary)
+# include_directories($ENV{HOME}/cusplibrary)
 
 # required due to weird hdf5 installation
 if (IS_DIRECTORY "/usr/include/hdf5/serial/")
@@ -44,4 +44,4 @@ register(lidDriven)
 register(lidDrivenGPU)
 register(lidDrivenDSSGPU)
 register(lidDrivenDSSRFGPU)
-registerCuda(lidDrivenIterativeGPU)
+# registerCuda(lidDrivenIterativeGPU)
