@@ -122,7 +122,7 @@ class LidDriven {
             //     Eigen::IncompleteLUT<double>> solver_u;
             Eigen::SparseLU<Eigen::SparseMatrix<double>> solver_u;
 
-            Range<int> per_row_u(2*N, support_size);
+            Range<int> per_row_u(dim*N, support_size);
             M_u.reserve(per_row_u);
 
             auto u_op = storage.implicitVectorOperators(M_u, rhs_u);
@@ -146,13 +146,19 @@ class LidDriven {
             u = VectorField<scal_t, dim>::fromLinear(solution);
 
             // P-V correction iteration -- PVI
-            scal_t max_div = 0;
-            for(int p_iter = 0; p_iter < max_p_iter; ++p_iter) {
-                for (int i : interior) rhs_p(i) = dt * op_e_v.div(u, i);
+            scal_t max_div;
+            int p_iter;
+            for(p_iter = 1; p_iter < max_p_iter; ++p_iter) {
+                #pragma omp parallel for default(none) schedule(static) shared(interior, u, rhs_p, op_e_v, dt)
+                for (int _ = 0; _ < interior.size(); ++_) {
+                    int i = interior[_];
+                    rhs_p(i) = op_e_v.div(u, i) / dt;
+                }
                 for (int i : boundary) rhs_p(i) = dt * u[i].dot(domain.normal(i));
                 ScalarFieldd p_c = solver_p.solve(rhs_p).head(N);
                 p += p_c;
 
+                max_div = 0;
                 #pragma omp parallel for default(none) schedule(static) shared(interior, u, op_e_s, op_e_v, p_c, dt)  reduction(max : max_div)
                 for (int _ = 0; _ < interior.size(); ++_) {
                     int i = interior[_];
@@ -174,7 +180,7 @@ class LidDriven {
                 int print_iter = (iteration - 1)/printout_interval;
                 max_u_y[print_iter] = max;
                 std::cout << iteration << " - t:" << t << " max u_y:" << max << " @ x:" << pos
-                          << "  (max div:" << max_div << ")" << std::endl;
+                          << "  (max div:" << max_div << " @ " << p_iter << ")" << std::endl;
             }
         }
 
