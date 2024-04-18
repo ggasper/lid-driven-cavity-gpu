@@ -148,7 +148,7 @@ class LidDriven {
             // P-V correction iteration -- PVI
             scal_t max_div;
             int p_iter;
-            for(p_iter = 1; p_iter < max_p_iter; ++p_iter) {
+            for(p_iter = 0; p_iter < max_p_iter; ++p_iter) {
                 #pragma omp parallel for default(none) schedule(static) shared(interior, u, rhs_p, op_e_v, dt)
                 for (int _ = 0; _ < interior.size(); ++_) {
                     int i = interior[_];
@@ -180,7 +180,7 @@ class LidDriven {
                 int print_iter = (iteration - 1)/printout_interval;
                 max_u_y[print_iter] = max;
                 std::cout << iteration << " - t:" << t << " max u_y:" << max << " @ x:" << pos
-                          << "  (max div:" << max_div << " @ " << p_iter << ")" << std::endl;
+                          << "  (max div:" << max_div << " @ " << p_iter + 1 << ")" << std::endl;
             }
         }
 
