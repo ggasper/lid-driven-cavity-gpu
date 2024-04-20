@@ -13,6 +13,8 @@
           Re="1000"
           seed="123"
           end_time="50"
+          solver_p="SparseLUWrapper"
+          solver_u="SparseLUWrapper"
     />
     <output use_xml_name="0"
             hdf5_name="results.h5"
