@@ -16,8 +16,8 @@ include_directories($ENV{HOME}/libcudss-linux-x86_64-0.2.0.12_cuda12-archive/inc
 link_directories($ENV{HOME}/libcudss-linux-x86_64-0.2.0.12_cuda12-archive/lib)
 
 
-include_directories($ENV{HOME}/libcusparse_lt-linux-x86_64-0.6.0.6-archive/include)
-link_directories($ENV{HOME}/libcusparse_lt-linux-x86_64-0.6.0.6-archive/lib)
+# include_directories($ENV{HOME}/libcusparse_lt-linux-x86_64-0.6.0.6-archive/include)
+# link_directories($ENV{HOME}/libcusparse_lt-linux-x86_64-0.6.0.6-archive/lib)
 # include_directories($ENV{HOME}/cusplibrary)
 
 # required due to weird hdf5 installation
@@ -34,7 +34,7 @@ include_directories(src)
 
 function(register name)
     add_executable(${name} src/${name}.cpp)
-    target_link_libraries(${name} medusa hdf5 gomp cusparse cudart cusolver cudss cusparseLt cublas)
+    target_link_libraries(${name} medusa hdf5 gomp cusparse cudart cusolver cudss cublas)
     target_compile_options(${name} PRIVATE -fopenmp -std=c++17 -O3)
     target_include_directories(${name} PRIVATE src/solvers)
 endfunction(register)

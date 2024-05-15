@@ -51,24 +51,16 @@ class VectorGPU {
   public:
     typedef double scal_t;
     int m;
-    // scal_t* value_ptr;
     thrust::device_vector<scal_t> value_ptr;
     VectorGPU(Eigen::VectorXd vec) {
         m = vec.size();
-        // cudaMalloc((void**)&value_ptr, sizeof(scal_t) * m);
         value_ptr.assign(vec.begin(), vec.end());
-        // cudaMemcpy(value_ptr, vec.data(), sizeof(scal_t) * m, cudaMemcpyHostToDevice);
     }
     VectorGPU(int size) {
         m = size;
         value_ptr.resize(m);
         thrust::fill(value_ptr.begin(), value_ptr.end(), 0);
-        // cudaMalloc((void**)&value_ptr, sizeof(scal_t) * m);
-        // cudaMemset(value_ptr, 0, sizeof(scal_t) * m);
     }
-    // ~VectorGPU() {
-    //     cudaFree(value_ptr);
-    // }
 };
 class MatrixGPU {
   public:
@@ -78,59 +70,13 @@ class MatrixGPU {
     thrust::device_vector<int> row_ptr;
     thrust::device_vector<int> col_ind;
     thrust::device_vector<scal_t> value_ptr;
-    // int* row_ptr;
-    // int* col_ind;
-    // scal_t* value_ptr;
     MatrixGPU(const Eigen::SparseMatrix<scal_t, Eigen::RowMajor>& mat) {
         nnz = mat.nonZeros();
         m = mat.rows();
-        // cudaMalloc((void**)&value_ptr, sizeof(scal_t) * nnz);
-        // cudaMalloc((void**)&row_ptr, sizeof(int) * (m + 1));
-        // cudaMalloc((void**)&col_ind, sizeof(int) * nnz);
-
-        // cudaMemcpy(value_ptr, mat.valuePtr(), nnz * sizeof(scal_t), cudaMemcpyHostToDevice);
-        // cudaMemcpy(col_ind, mat.innerIndexPtr(), nnz * sizeof(int), cudaMemcpyHostToDevice);
-        // cudaMemcpy(row_ptr, mat.outerIndexPtr(), (m + 1) * sizeof(int), cudaMemcpyHostToDevice);
-        // row_ptr.assign(mat.outerIndexPtr(), mat.outerIndexPtr() + (m + 1) * sizeof(int));
-        // col_ind.assign(mat.innerIndexPtr(), mat.innerIndexPtr() + nnz * sizeof(int));
-        // value_ptr.assign(mat.valuePtr(), mat.valuePtr() + nnz * sizeof(scal_t));
         row_ptr.assign(mat.outerIndexPtr(), mat.outerIndexPtr() + (m + 1));
         col_ind.assign(mat.innerIndexPtr(), mat.innerIndexPtr() + nnz);
         value_ptr.assign(mat.valuePtr(), mat.valuePtr() + nnz);
     }
-    // ~MatrixGPU() {
-    //     cudaFree(row_ptr);
-    //     cudaFree(col_ind);
-    //     cudaFree(value_ptr);
-    // }
-    // void multiply(VectorGPU& vec, VectorGPU& out, double alpha, double beta,
-    //               cusparseHandle_t& handle, cudaStream_t& stream) {
-    //     cusparseSetStream(handle, stream);
-    //     size_t buffer_size;
-
-    //     cusparseSpMatDescr_t descrMat;
-    //     cusparseDnVecDescr_t descrVec;
-    //     cusparseDnVecDescr_t descrOut;
-    //     cusparseCreateCsr(&descrMat, m, m, nnz, thrust::raw_pointer_cast(row_ptr.data()),
-    //                       thrust::raw_pointer_cast(col_ind.data()),
-    //                       thrust::raw_pointer_cast(value_ptr.data()), CUSPARSE_INDEX_32I,
-    //                       CUSPARSE_INDEX_32I, CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F);
-    //     cusparseCreateDnVec(&descrVec, m, thrust::raw_pointer_cast(vec.value_ptr.data()),
-    //                         CUDA_R_64F);
-    //     cusparseCreateDnVec(&descrOut, m, thrust::raw_pointer_cast(out.value_ptr.data()),
-    //                         CUDA_R_64F);
-    //     cusparseSpMV_bufferSize(handle, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, descrMat,
-    //                             descrVec, &beta, descrOut, CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT,
-    //                             &buffer_size);
-    //     size_t* buffer;
-    //     cudaMallocAsync((void**)&buffer, buffer_size, stream);
-    //     cusparseSpMV(handle, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, descrMat, descrVec, &beta,
-    //                  descrOut, CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, buffer);
-    //     cudaFreeAsync(buffer, stream);
-    //     cusparseDestroySpMat(descrMat);
-    //     cusparseDestroyDnVec(descrVec);
-    //     cusparseDestroyDnVec(descrOut);
-    // }
 };
 class Multiply {
     MatrixGPU* mat;
@@ -189,6 +135,7 @@ class LidDrivenMatrixACM {
 
     explicit LidDrivenMatrixACM(XML& param_file) {
         Stopwatch s;
+        s.start("time");
         s.start("setup");
         HDF::Mode mode = param_file.get<bool>("output.clear_hdf5") ? HDF::DESTROY : HDF::APPEND;
         HDF hdf_out(param_file.get<std::string>("output.hdf5_name"), mode);
@@ -327,8 +274,6 @@ class LidDrivenMatrixACM {
             derivative[var].makeCompressed();
             stack[var].makeCompressed();
         }
-        s.stop("setup");
-        s.start("gpu setup");
 
         cusparseHandle_t cusparse_handle;
         cublasHandle_t cublas_handle;
@@ -345,6 +290,7 @@ class LidDrivenMatrixACM {
         for (int i = 0; i < stack.size(); ++i) {
             d_stack.emplace_back(stack[i]);
         }
+        s.start("gpu setup");
         VectorGPU d_u{u};
         VectorGPU d_u_partial{u_partial};
         MatrixGPU d_grad_p{grad_p};
@@ -373,7 +319,7 @@ class LidDrivenMatrixACM {
         Multiply lap_u(&d_lap, &d_u, &d_u_partial, dt / Re, 1, cusparse_handle);
         std::vector<Multiply> derivative_u;
         std::vector<Multiply> stack_u;
-        derivative_u.reserve(dim); // workaround for lack of copy/move constructors (TODO)
+        derivative_u.reserve(dim);  // workaround for lack of copy/move constructors (TODO)
         stack_u.reserve(dim);
         Multiply grad_p_p(&d_grad_p, &d_p, &d_u, -dt, 1, cusparse_handle);
         Multiply component_sum_u2(&d_component_sum, &d_u2, &d_component_sum_u, 1, 0,
@@ -384,10 +330,7 @@ class LidDrivenMatrixACM {
             derivative_u.emplace_back(&d_derivative[var], &d_u, &u_partial_lhs[var], dt, 0,
                                       cusparse_handle);
             stack_u.emplace_back(&d_stack[var], &d_u, &u_partial_rhs[var], 1, 0, cusparse_handle);
-            std::cout << "before?" << std::endl;
-            cudaDeviceSynchronize();
         }
-        s.stop("gpu setup");
         scal_t t = 0;
         auto end_time = param_file.get<scal_t>("case.end_time");
         auto printout_interval = param_file.get<int>("output.printout_interval");
@@ -398,29 +341,21 @@ class LidDrivenMatrixACM {
         int num_print = end_time / (dt * printout_interval);
         Eigen::VectorXd max_u_y(num_print);
         int iteration = 0;
+        s.stop("gpu setup");
+        s.stop("setup");
         while (t < end_time) {
-            // cublasDcopy(cublas_handle, uGPU.value_ptr, 1, u_partialGPU.value_ptr, 1);
-            // u_partial = u + dt / Re * lap * u;
-            // cublasDaxpy(cublas_handle, &alpha, u_partialGPU.value_ptr, 1, u_partialGPU.value_ptr,
-            // 1);
             s.start("u = u + dt / Re * lap * u");
-            // d_u_partial.value_ptr = d_u.value_ptr;
             thrust::copy(d_u.value_ptr.begin(), d_u.value_ptr.end(), d_u_partial.value_ptr.begin());
-            // d_lap.multiply(d_u, d_u_partial, dt / Re, 1, cusparse_handle, streams_lhs[0]);
             lap_u(streams_lhs[0]);
             cudaDeviceSynchronize();
             s.stop("u = u + dt / Re * lap * u");
 
-            s.start("u_partial rhs");
+            s.start("derivative stack correction");
             for (int var = 0; var < dim; ++var) {  // Complication to remain general in dimensions.
                                                    // Can be written explicitly.
-                // d_derivative[var].multiply(d_u, u_partial_lhs[var], dt, 0, cusparse_handle,
-                //                            streams_lhs[var]);
                 derivative_u[var](streams_lhs[var]);
                 cudaEvent_t ev;
                 cudaEventCreate(&ev);
-                // d_stack[var].multiply(d_u, u_partial_rhs[var], 1, 0, cusparse_handle,
-                //   streams_rhs[var]);
                 stack_u[var](streams_rhs[var]);
                 cudaEventRecord(ev, streams_rhs[var]);
                 cudaStreamWaitEvent(streams_lhs[var], ev);
@@ -430,102 +365,54 @@ class LidDrivenMatrixACM {
                     thrust::cuda::par.on(streams_lhs[var]), u_partial_rhs[var].value_ptr.begin(),
                     u_partial_rhs[var].value_ptr.end(), u_partial_lhs[var].value_ptr.begin(),
                     u_partial_lhs[var].value_ptr.begin(), op);
-
-                // u_partial -= dt * (derivative[var] * u).cwiseProduct(stack[var] * u);
             }
             cudaDeviceSynchronize();
-            s.stop("u_partial rhs");
-            s.start("u_partial combine");
             for (int var = 0; var < dim; ++var) {  // Complication to remain general in dimensions.
-                // double alpha = -1;
-                // cublasDaxpy(cublas_handle, d_u_partial.m, &alpha,
-                //             thrust::raw_pointer_cast(u_partial_lhs[var].value_ptr.data()), 1,
-                //             thrust::raw_pointer_cast(d_u_partial.value_ptr.data()), 1);
                 thrust::transform(u_partial_lhs[var].value_ptr.begin(),
                                   u_partial_lhs[var].value_ptr.end(), d_u_partial.value_ptr.begin(),
                                   d_u_partial.value_ptr.begin(), axpy_functor(-1));
-                cudaDeviceSynchronize();
             }
-            s.stop("u_partial combine");
-            // for (auto iter = d_u_partial.value_ptr.begin(); iter != d_u_partial.value_ptr.end();
-            //  ++iter) {
-            // std::cout << *iter << " ";
-            // }
-            // std::cout << std::endl;
+            s.stop("derivative stack correction");
             scal_t max_norm, max_div;
             int p_iter;
             cudaDeviceSynchronize();
             for (p_iter = 0; p_iter < max_p_iter; ++p_iter) {
                 s.start("PV correction");
                 cudaStream_t default_stream = 0;
-                // d_u.value_ptr = d_u_partial.value_ptr;
                 thrust::copy(d_u_partial.value_ptr.begin(), d_u_partial.value_ptr.end(),
                              d_u.value_ptr.begin());
 
-                // cudaDeviceSynchronize();
-                // d_grad_p.multiply(d_p, d_u, -dt, 1, cusparse_handle, default_stream);
                 grad_p_p(default_stream);
                 s.stop("PV correction");
-                // u = u_partial - dt * grad_p * p;
-                // cudaDeviceSynchronize();
                 s.start("max_norm");
-                // d_u2.value_ptr = d_u.value_ptr;
                 thrust::copy(d_u.value_ptr.begin(), d_u.value_ptr.end(), d_u2.value_ptr.begin());
-                // cudaDeviceSynchronize();
                 auto op = thrust::multiplies<double>();
                 thrust::transform(d_u.value_ptr.begin(), d_u.value_ptr.end(),
                                   d_u2.value_ptr.begin(), d_u2.value_ptr.begin(), op);
-                // // d_component_sum.multiply(d_u2, d_component_sum_u, 1, 0, cusparse_handle,
-                //                          default_stream);
                 component_sum_u2(default_stream);
-                // int max_norm_index;
-                // cublasIdamax(cublas_handle, d_component_sum.m,
-                //              thrust::raw_pointer_cast(d_component_sum.value_ptr.data()), 1,
-                //              &max_norm_index);
-                // max_norm = std::sqrt((component_sum * u.cwiseProduct(u)).maxCoeff());
                 max_norm = std::sqrt(*thrust::max_element(d_component_sum_u.value_ptr.begin(),
                                                           d_component_sum_u.value_ptr.end()));
-                // max_norm = std::sqrt(max_norm);
                 s.stop("max_norm");
-                s.start("p computation");
+                s.start("p");
                 scal_t C = compress * std::max(max_norm, v_ref);
-                // Eigen::VectorXd divergence = div * u;
-                // double alpha = C * C * dt;
-                // d_div.multiply(d_u, d_divergence, 1, 0, cusparse_handle, default_stream);
                 div_u(default_stream);
-                s.stop("p computation");
-                // cublasDaxpy(cublas_handle, d_p.m, &alpha,
-                //             thrust::raw_pointer_cast(d_divergence.value_ptr.data()), 1,
-                //             thrust::raw_pointer_cast(d_p.value_ptr.data()), 1);
-                // cudaDeviceSynchronize();
-                // std::cout << "here" << std::endl;
-                s.start("max_div");
                 thrust::transform(d_divergence.value_ptr.begin(), d_divergence.value_ptr.end(),
                                   d_p.value_ptr.begin(), d_p_temp.value_ptr.begin(),
                                   axpy_functor(-C * C * dt));
-                // p = p - C * C * dt * divergence;
-                // cudaDeviceSynchronize();
-                // d_neumann.multiply(d_p_temp, d_p, 1, 0, cusparse_handle, default_stream);
                 neumann_p(default_stream);
-                // p = neumann * p;
-                // max_div = divergence.cwiseAbs().maxCoeff();
+                s.stop("p");
+                s.start("max_div");
                 thrust::transform(d_divergence.value_ptr.begin(), d_divergence.value_ptr.end(),
                                   d_divergence.value_ptr.begin(), abs_functor());
                 max_div = *thrust::max_element(d_divergence.value_ptr.begin(),
                                                d_divergence.value_ptr.end());
-                // cudaDeviceSynchronize();
                 s.stop("max_div");
                 if (max_div < div_limit) break;
             }
             t += dt;
             if (++iteration % printout_interval == 0) {
-                s.start("output");
+                s.start("print");
                 scal_t max = 0, pos;
-                // for (auto iter = d_u.value_ptr.begin(); iter != d_u.value_ptr.end(); ++iter) {
-                //     std::cout << *iter << " ";
-                // }
-                // std::cout << std::endl;
-                // return;
                 thrust::tuple<int, double> result = thrust::transform_reduce(
                     d_midplane.begin(), d_midplane.end(),
                     u_tuple_functor(thrust::raw_pointer_cast(d_u.value_ptr.data()), N, dim),
@@ -533,33 +420,41 @@ class LidDrivenMatrixACM {
                 cudaDeviceSynchronize();
                 max = thrust::get<1>(result);
                 pos = domain.pos(thrust::get<0>(result), 0);
-                // for (int i : midplane) {
-                // if (u(i + (dim - 1) * N) > max) {
-                // max = u(i + (dim - 1) * N);
-                // pos = domain.pos(i, 0);
-                // }
-                // }
                 int print_iter = (iteration - 1) / printout_interval;
                 max_u_y[print_iter] = max;
                 std::cout << iteration << " - t:" << t << " max u_y:" << max << " @ x:" << pos
                           << "  (max div:" << max_div << " @ " << p_iter << ")" << std::endl;
-                s.stop("output");
+                s.stop("print");
             }
         }
 
-        const auto end{std::chrono::steady_clock::now()};
-        const std::chrono::duration<double> elapsed_time{end - start};
+        // const auto end{std::chrono::steady_clock::now()};
+        // const std::chrono::duration<double> elapsed_time{end - start};
 
         cublasDestroy(cublas_handle);
         cusparseDestroy(cusparse_handle);
+        s.stop("time");
+
         hdf_out.reopen();
         hdf_out.openGroup("/");
         hdf_out.writeEigen("velocity", VectorField<scal_t, dim>::fromLinear(u));
         hdf_out.writeEigen("pressure", p);
-        hdf_out.writeDoubleAttribute("time", elapsed_time.count());
+        // hdf_out.writeDoubleAttribute("time", elapsed_time.count());
         hdf_out.writeEigen("max_u_y", max_u_y);
+        std::vector<std::string> labels{"time",
+                                        "setup",
+                                        "gpu setup",
+                                        "u = u + dt / Re * lap * u",
+                                        "derivative stack correction",
+                                        "PV correction",
+                                        "max_norm",
+                                        "p",
+                                        "max_div",
+                                        "print"};
+        for (std::string label : labels) {
+            hdf_out.writeDoubleAttribute(label, s.cumulativeTime(label));
+        }
         hdf_out.close();
-        std::cout << s << std::endl;
     }
 };
 

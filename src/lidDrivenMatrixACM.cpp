@@ -1,5 +1,6 @@
 #include <iostream>
 #include <medusa/Medusa.hpp>
+#include <medusa/Utils.hpp>
 #include <Eigen/SparseLU>
 #include <chrono>
 
@@ -14,6 +15,9 @@ class LidDrivenMatrixACM {
     typedef Vec<scal_t, dim> vec_t;
 
     explicit LidDrivenMatrixACM(XML &param_file) {
+        Stopwatch s;
+        s.start("time");
+        s.start("setup");
         HDF::Mode mode = param_file.get<bool>("output.clear_hdf5")
                          ? HDF::DESTROY
                          : HDF::APPEND;
@@ -131,6 +135,8 @@ class LidDrivenMatrixACM {
                 }
             }
         }
+        std::cout << derivative[0].nonZeros() / double(derivative[0].rows() * derivative[0].cols()) << std::endl;
+        s.start("compression");
         grad_p.makeCompressed();
         lap.makeCompressed();
         div.makeCompressed();
@@ -140,6 +146,8 @@ class LidDrivenMatrixACM {
             derivative[var].makeCompressed();
             stack[var].makeCompressed();
         }
+        std::cout << derivative[0].nonZeros() / double((derivative[0].rows() * derivative[0].cols())) << std::endl;
+        s.stop("compression");
 
         scal_t t = 0;
         auto end_time = param_file.get<scal_t>("case.end_time");
@@ -151,25 +159,39 @@ class LidDrivenMatrixACM {
         int num_print = end_time / (dt * printout_interval);
         Eigen::VectorXd max_u_y(num_print);
         int iteration = 0;
+        s.stop("setup");
         while (t < end_time) {
+            s.start("u = u + dt / Re * lap * u");
             u_partial = u + dt / Re * lap * u;
+            s.stop("u = u + dt / Re * lap * u");
+            s.start("derivative stack correction");
             for (int var = 0; var < dim; ++var) { // Complication to remain general in dimensions. Can be written explicitly.
                 u_partial -= dt * (derivative[var] * u).cwiseProduct(stack[var] * u);
             }
+            s.stop("derivative stack correction");
             scal_t max_norm, max_div;
             int p_iter;
             for(p_iter=0; p_iter < max_p_iter; ++p_iter) {
+                s.start("PV correction");
                 u = u_partial - dt * grad_p * p;
+                s.stop("PV correction");
+                s.start("max_norm");
                 max_norm = std::sqrt((component_sum * u.cwiseProduct(u)).maxCoeff());
+                s.stop("max_norm");
+                s.start("p");
                 scal_t C = compress * std::max(max_norm, v_ref);
                 Eigen::VectorXd divergence =  div * u;
                 p = p - C * C * dt * divergence;
                 p = neumann * p;
+                s.stop("p");
+                s.start("max_div");
                 max_div = divergence.cwiseAbs().maxCoeff();
+                s.stop("max_div");
                 if (max_div < div_limit) break;
             }
             t += dt;
             if (++iteration % printout_interval == 0) {
+                s.start("print");
                 scal_t max = 0, pos;
                 for (int i : midplane) {
                     if (u(i + (dim - 1) * N) > max) {
@@ -181,17 +203,32 @@ class LidDrivenMatrixACM {
                 max_u_y[print_iter] = max;
                 std::cout << iteration << " - t:" << t << " max u_y:" << max << " @ x:" << pos
                           << "  (max div:" << max_div << " @ " << p_iter << ")" << std::endl;
+                s.stop("print");
             }
         }
 
-        const auto end{std::chrono::steady_clock::now()};
-        const std::chrono::duration<double> elapsed_time{end - start};
+        // const auto end{std::chrono::steady_clock::now()};
+        // const std::chrono::duration<double> elapsed_time{end - start};
 
+        s.stop("time");
         hdf_out.reopen();
         hdf_out.openGroup("/");
         hdf_out.writeEigen("velocity", VectorField<scal_t, dim>::fromLinear(u));
         hdf_out.writeEigen("pressure", p);
-        hdf_out.writeDoubleAttribute("time", elapsed_time.count());
+        // hdf_out.writeDoubleAttribute("time", elapsed_time.count());
+        std::vector<std::string> labels{"time",
+                                        "setup",
+                                        "compression",
+                                        "u = u + dt / Re * lap * u",
+                                        "derivative stack correction",
+                                        "PV correction",
+                                        "max_norm",
+                                        "p",
+                                        "max_div",
+                                        "print"};
+        for (std::string label : labels) {
+            hdf_out.writeDoubleAttribute(label, s.cumulativeTime(label));
+        }
         hdf_out.writeEigen("max_u_y", max_u_y);
         hdf_out.close();
     }
