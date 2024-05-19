@@ -61,6 +61,11 @@ class VectorGPU {
         value_ptr.resize(m);
         thrust::fill(value_ptr.begin(), value_ptr.end(), 0);
     }
+    void to_eigen(Eigen::VectorXd& vec) {
+        for (int i = 0; i < m; ++i) {
+            vec[i] = value_ptr[i];
+        }
+    }
 };
 class MatrixGPU {
   public:
@@ -434,6 +439,8 @@ class LidDrivenMatrixACM {
         cublasDestroy(cublas_handle);
         cusparseDestroy(cusparse_handle);
         s.stop("time");
+        d_u.to_eigen(u);
+        d_p.to_eigen(p);
 
         hdf_out.reopen();
         hdf_out.openGroup("/");
