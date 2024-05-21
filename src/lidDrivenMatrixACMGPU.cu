@@ -62,9 +62,10 @@ class VectorGPU {
         thrust::fill(value_ptr.begin(), value_ptr.end(), 0);
     }
     void to_eigen(Eigen::VectorXd& vec) {
-        for (int i = 0; i < m; ++i) {
-            vec[i] = value_ptr[i];
-        }
+        thrust::copy(value_ptr.begin(), value_ptr.end(), vec.begin());
+        // for (int i = 0; i < m; ++i) {
+        //     vec[i] = value_ptr[i];
+        // }
     }
 };
 class MatrixGPU {
@@ -289,9 +290,11 @@ class LidDrivenMatrixACM {
         std::vector<MatrixGPU> d_derivative;
         std::vector<MatrixGPU> d_stack;
         MatrixGPU d_lap{lap};
+        d_derivative.reserve(derivative.size());
         for (int i = 0; i < derivative.size(); ++i) {
             d_derivative.emplace_back(derivative[i]);
         }
+        d_stack.reserve(stack.size());
         for (int i = 0; i < stack.size(); ++i) {
             d_stack.emplace_back(stack[i]);
         }
