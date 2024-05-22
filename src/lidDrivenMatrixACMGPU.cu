@@ -151,7 +151,10 @@ class LidDrivenMatrixACM {
         auto cfl = param_file.get<scal_t>("num.cfl");
         auto seed = param_file.get<int>("case.seed");
 
-        scal_t dt = cfl * h / dim;
+        scal_t dt1 = cfl * h / dim;
+        scal_t dt2 = cfl / 10 * h * h * Re;
+        std::cout << "dt1:" << dt1 << ", dt2:" << dt2 << std::endl;
+        scal_t dt = std::min(dt1, dt2);
 
         const auto start{std::chrono::steady_clock::now()};
 
@@ -224,9 +227,15 @@ class LidDrivenMatrixACM {
         component_sum.reserve(Eigen::VectorXi::Constant(N, dim));
         Range<Eigen::SparseMatrix<double, Eigen::RowMajor>> derivative, stack;
         for (int var = 0; var < dim; ++var) {
-            derivative.emplace_back(dim * N, dim * N);
+            // derivative.emplace_back(dim * N, dim * N);
+            // stack.emplace_back(dim * N, dim * N);
             stack.emplace_back(dim * N, dim * N);
+            stack.back().reserve(Eigen::VectorXi::Constant(dim * N, 1));
         }
+         // workaround
+        Eigen::SparseMatrix<double, Eigen::RowMajor> d0(dim * N, dim * N), d1(dim * N, dim * N);
+        d0.reserve(Eigen::VectorXi::Constant(dim * N, support_size));
+        d1.reserve(Eigen::VectorXi::Constant(dim * N, support_size));
         for (int i = 0; i < domain.size(); ++i) {
             if (domain.type(i) > 0) {
                 neumann.insert(i, i) = 1;
@@ -240,11 +249,14 @@ class LidDrivenMatrixACM {
                             storage.laplace(i, s);
                         div.insert(i, storage.support(i, s) + var * domain.size()) =
                             storage.d1(var, i, s);
+                        // workaround
+                        d0.insert(i + var * domain.size(), storage.support(i, s) + var * domain.size()) = storage.d1(0, i, s);
+                        d1.insert(i + var * domain.size(), storage.support(i, s) + var * domain.size()) = storage.d1(1, i, s);
                         for (int der_var = 0; der_var < dim; ++der_var) {
-                            derivative[der_var].insert(
-                                i + var * domain.size(),
-                                storage.support(i, s) + var * domain.size()) =
-                                storage.d1(der_var, i, s);
+                            // derivative[der_var].insert(
+                                // i + var * domain.size(),
+                                // storage.support(i, s) + var * domain.size()) =
+                                // storage.d1(der_var, i, s);
                             // This could be replaced with some sort of stacking operation if
                             // available
                             if (s == 0) {
@@ -276,6 +288,8 @@ class LidDrivenMatrixACM {
         div.makeCompressed();
         neumann.makeCompressed();
         component_sum.makeCompressed();
+        derivative.push_back(d0); // workaround
+        derivative.push_back(d1); // workaround
         for (int var = 0; var < dim; ++var) {
             derivative[var].makeCompressed();
             stack[var].makeCompressed();
