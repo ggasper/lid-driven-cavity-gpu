@@ -53,7 +53,7 @@ class SolverQR {
         cudaMemcpy(b, rhs.data(), sizeof(scal_t) * m, cudaMemcpyHostToDevice);
 
         int singularity = -1;
-        cusolverSpDcsrlsvqr(cusolver_handle, m, nnz, descrA, value_ptr, row_ptr, col_ind, b, 1e-12, 1,
+        cusolverSpDcsrlsvqr(cusolver_handle, m, nnz, descrA, value_ptr, row_ptr, col_ind, b, 1e-14, 1,
                             x, &singularity);
         if (singularity != -1) {
             std::cout << "Singularity is " << singularity << std::endl;

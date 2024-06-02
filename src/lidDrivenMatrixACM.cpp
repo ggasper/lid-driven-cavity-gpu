@@ -175,11 +175,11 @@ class LidDrivenMatrixACM {
             s.start("u = u + dt / Re * lap * u");
             u_partial = u + dt / Re * lap * u;
             s.stop("u = u + dt / Re * lap * u");
-            s.start("derivative stack correction");
+            s.start("advection");
             for (int var = 0; var < dim; ++var) { // Complication to remain general in dimensions. Can be written explicitly.
                 u_partial -= dt * (derivative[var] * u).cwiseProduct(stack[var] * u);
             }
-            s.stop("derivative stack correction");
+            s.stop("advection");
             scal_t max_norm, max_div;
             int p_iter;
             for(p_iter=0; p_iter < max_p_iter; ++p_iter) {
@@ -237,10 +237,11 @@ class LidDrivenMatrixACM {
                                         "p",
                                         "max_div",
                                         "print"};
+        hdf_out.writeEigen("max_u_y", max_u_y);
+        hdf_out.openGroup("times");
         for (std::string label : labels) {
             hdf_out.writeDoubleAttribute(label, s.cumulativeTime(label));
         }
-        hdf_out.writeEigen("max_u_y", max_u_y);
         hdf_out.close();
     }
 };

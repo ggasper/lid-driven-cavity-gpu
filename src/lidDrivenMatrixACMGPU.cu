@@ -96,14 +96,11 @@ class Multiply {
     size_t* buffer;
     double alpha;
     double beta;
-    bool is_init = false;
 
   public:
     Multiply(MatrixGPU* _mat, VectorGPU* _vec, VectorGPU* _out, double _alpha, double _beta,
              cusparseHandle_t _handle)
-        : mat(_mat), vec(_vec), out(_out), alpha(_alpha), beta(_beta), handle(_handle) {}
-    void operator()(cudaStream_t stream) {
-        if (!is_init) {
+        : mat(_mat), vec(_vec), out(_out), alpha(_alpha), beta(_beta), handle(_handle) {
             cusparseCreateCsr(&descrMat, mat->m, mat->m, mat->nnz,
                               thrust::raw_pointer_cast(mat->row_ptr.data()),
                               thrust::raw_pointer_cast(mat->col_ind.data()),
@@ -120,8 +117,9 @@ class Multiply {
             cusparseSpMV_preprocess(handle, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, descrMat,
                                     descrVec, &beta, descrOut, CUDA_R_64F,
                                     CUSPARSE_SPMV_ALG_DEFAULT, buffer);
-            is_init = true;
+
         }
+    void operator()(cudaStream_t stream) {
         cusparseSetStream(handle, stream);
         cusparseSpMV(handle, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, descrMat, descrVec, &beta,
                      descrOut, CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, buffer);

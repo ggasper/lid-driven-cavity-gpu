@@ -1,5 +1,6 @@
 #include <iostream>
 #include <medusa/Medusa.hpp>
+#include <medusa/Utils.hpp>
 #include <Eigen/SparseLU>
 #include <sparseluwrapper.hpp>
 #include <solverQR.hpp>
@@ -30,6 +31,9 @@ class LidDriven {
         scal_t dt = cfl * h / dim;
 
         const auto start{std::chrono::steady_clock::now()};
+        Stopwatch s;
+        s.start("time");
+        s.start("domain setup");
 
         BoxShape<vec_t> box(vec_t::Zero(), vec_t::Constant(1));
         DomainDiscretization<vec_t> domain = box.discretizeBoundaryWithStep(h);
@@ -84,7 +88,9 @@ class LidDriven {
         auto op_e_v = storage.explicitVectorOperators();
         auto op_e_s = storage.explicitOperators();
 
+        s.stop("domain setup");
         // pressure correction matrix
+        s.start("M_p construction");
         Eigen::SparseMatrix<scal_t, ordering_p> M_p(N + 1, N + 1);
         Eigen::VectorXd rhs_p(N + 1);
         rhs_p.setZero();
@@ -106,6 +112,7 @@ class LidDriven {
         M_p.makeCompressed();
         // Eigen::SparseLU<Eigen::SparseMatrix<double>> solver_p;
         SolverP solver_p(M_p);
+        s.stop("M_p construction");
         // solver_p.compute(M_p);
         // if (solver_p.info() != Eigen::Success) {
             // std::cout << "LU factorization failed with error:" << solver_p.lastErrorMessage()
@@ -121,6 +128,7 @@ class LidDriven {
         Eigen::VectorXd max_u_y(num_print);
         int iteration = 0;
         while (t < end_time) {
+            s.start("M_u construction");
             Eigen::SparseMatrix<double, ordering_u> M_u(dim * N, dim * N);
             Eigen::VectorXd rhs_u(dim * N);
             rhs_u.setZero();
@@ -147,26 +155,34 @@ class LidDriven {
             }
 
             M_u.makeCompressed();
+            s.stop("M_u construction");
+            s.start("M_u solve");
             SolverU solver_u(M_u);
             // solver_u.compute(M_u);
             // Eigen::VectorXd solution = solver_u.solveWithGuess(rhs_u, u.asLinear());
             Eigen::VectorXd solution = solver_u.solve(rhs_u);
             u = VectorField<scal_t, dim>::fromLinear(solution);
+            s.stop("M_u solve");
 
             // P-V correction iteration -- PVI
             scal_t max_div;
             int p_iter;
             for (p_iter = 0; p_iter < max_p_iter; ++p_iter) {
+                s.start("rhs_p");
 #pragma omp parallel for default(none) schedule(static) shared(interior, u, rhs_p, op_e_v, dt)
                 for (int _ = 0; _ < interior.size(); ++_) {
                     int i = interior[_];
                     rhs_p(i) = op_e_v.div(u, i) / dt;
                 }
                 for (int i : boundary) rhs_p(i) = dt * u[i].dot(domain.normal(i));
+                s.stop("rhs_p");
+                s.start("M_p solve");
                 ScalarFieldd p_c = solver_p.solve(rhs_p).head(N);
                 p += p_c;
+                s.stop("M_p solve");
 
                 max_div = 0;
+                s.start("pressure correction");
 #pragma omp parallel for default(none) schedule(static) \
     shared(interior, u, op_e_s, op_e_v, p_c, dt) reduction(max : max_div)
                 for (int _ = 0; _ < interior.size(); ++_) {
@@ -174,7 +190,7 @@ class LidDriven {
                     u[i] -= dt * op_e_s.grad(p_c, i);
                     max_div = std::max(std::abs(op_e_v.div(u, i)), max_div);
                 }
-
+                s.stop("pressure correction");
                 if (max_div < div_limit) break;
             }
             t += dt;
@@ -193,6 +209,8 @@ class LidDriven {
             }
         }
 
+        s.stop("time");
+        auto times = {"time", "domain setup", "M_p construction", "M_u construction", "M_u solve", "rhs_p", "M_p solve", "pressure correction"};
         const auto end{std::chrono::steady_clock::now()};
         const std::chrono::duration<double> elapsed_time{end - start};
 
@@ -202,6 +220,10 @@ class LidDriven {
         hdf_out.writeEigen("pressure", p);
         hdf_out.writeDoubleAttribute("time", elapsed_time.count());
         hdf_out.writeEigen("max_u_y", max_u_y);
+        hdf_out.openGroup("times");
+        for (std::string time : times) {
+            hdf_out.writeDoubleAttribute(time, s.cumulativeTime(time));
+        }
         hdf_out.close();
     }
 };
