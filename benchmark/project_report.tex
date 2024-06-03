@@ -292,6 +292,9 @@ better as \(N\) grows larger.
     the artificial compressibility method, for different problem sizes.} 
     \label{fig:lidDrivenACM_time} 
 \end{figure}
+From \ref{fig:lidDrivenACM_comp} we can see that the execution time of various parts remains relatively
+constant for larger \(N\). Interestingly element-wise operations seem to take more time than 
+matrix multiplications when using the GPU version.
 \begin{figure}[h!] 
     \centering 
     \includegraphics[width=0.8\textwidth]{plots/lidDrivenACM_comp.png} 
