@@ -292,11 +292,38 @@ better as \(N\) grows larger.
     the artificial compressibility method, for different problem sizes.} 
     \label{fig:lidDrivenACM_time} 
 \end{figure}
+\begin{figure}[h!] 
+    \centering 
+    \includegraphics[width=0.8\textwidth]{plots/lidDrivenACM_comp.png} 
+    \caption{Comparison of times for various parts of the program, when using the artificial compressibility
+    method.} 
+    \label{fig:lidDrivenACM_comp} 
+\end{figure}
 
-Much like for the implicit method we can also observe from \ref{fig:lidDrivenACM_convergence} that 
-the methods converge towards some fixed value. Their middle line velocities also match, which we can 
-see from \ref{fig:lidDrivenACM_cross}.
-
+Much like for the pressure projection method we can also observe from \ref{fig:lidDrivenACM_convergence} that 
+the method converge towards some fixed value for the example of \(N = 4570\). The middle line velocity
+for the same example also matches the CPU version, which we can
+see from \ref{fig:lidDrivenACM_cross}. From \ref{fig:lidDrivenACM_conv} we can see that for all 
+problem sizes the final maximum \(u_y\) velocity at the middle section matches for both the 
+CPU and GPU versions.
+\begin{figure}[h!] 
+    \centering 
+    \includegraphics[width=0.8\textwidth]{plots/lidDrivenACM_convergence.png} 
+    \caption{Graph of max $u_y$ in regard to number of steps taken using the artificial compressibility method.} 
+    \label{fig:lidDrivenACM_convergence} 
+\end{figure}
+\begin{figure}[h!] 
+    \centering 
+    \includegraphics[width=0.8\textwidth]{plots/lidDrivenACM_cross.png} 
+    \caption{Graph of velocities at the middle line after 50 seconds using the artificial compressibility method.} 
+    \label{fig:lidDrivenACM_cross} 
+\end{figure}
+\begin{figure}[h!] 
+    \centering 
+    \includegraphics[width=0.8\textwidth]{plots/lidDrivenACM_conv.png} 
+    \caption{Graph of max $u_y$ at the final time with regard to the size of the problem.}
+    \label{fig:lidDrivenACM_conv} 
+\end{figure}
 \section{Further work}
 While the project is nearing completion there is some more work to be done. For an instance it 
 would be good to benchmark the performance for some even larger \(N\), to see if the trends continue
@@ -316,16 +343,5 @@ as it is currently setup specifically for the server, which was used for the pro
     DOI: 10.1016/j.advengsoft.2016.05.010
 \end{thebibliography}
 
-\begin{figure}[h!] 
-    \centering 
-    \includegraphics[width=0.8\textwidth]{plots/lidDrivenACM_convergence.png} 
-    \caption{Graph of max $u_y$ in regard to number of steps taken using the explicit method.} 
-    \label{fig:lidDrivenACM_convergence} 
-\end{figure}
-\begin{figure}[h!] 
-    \centering 
-    \includegraphics[width=0.8\textwidth]{plots/lidDrivenACM_cross.png} 
-    \caption{Graph of velocities at the middle line after 50 seconds using the explicit method.} 
-    \label{fig:lidDrivenACM_cross} 
-\end{figure}
+
 \end{document}
