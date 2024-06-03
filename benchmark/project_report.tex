@@ -12,6 +12,7 @@
 \usepackage{geometry}        % Page layout
 \usepackage{listings}
 \usepackage{physics}
+\usepackage{subcaption}
 % \geometry{a4paper, margin=1in}
 % TODO add more graphs, check grammar
 % Title, author, and date
@@ -34,11 +35,21 @@ The performance and accuracy of the GPU based versions are then tested on the
 lid driven cavity problem. The lid driven cavity problem is the case where the fluid is in 
 a square case, where one of the sides induces some movement. 
 The case is schematically presented in the figure \ref{fig:lid_driven_cavity}, 
-from \cite{lidDriven}.
+from \cite{lidDriven} alongside an example final velocity field.
 \begin{figure}[h!] 
+    \centering
+    \begin{subfigure}[t]{0.4\textwidth}
     \centering 
-    \includegraphics[width=0.6\textwidth]{plots/lid_driven_cavity.png} 
+    \includegraphics[width=1\textwidth]{plots/lid_driven_cavity.png} 
     \caption{The schematic of the lid driven cavity problem.} 
+    \end{subfigure}
+    \begin{subfigure}[t]{0.4\textwidth}
+    \centering 
+    \includegraphics[width=1\textwidth]{plots/lidDriven_problem.png} 
+    \caption{An example of the final velocity field, at the end of a 50 second simulation 
+    using the pressure projection method.} 
+    \end{subfigure}
+    \caption{Schematic and example velocity field of the lid driven cavity problem.}
     \label{fig:lid_driven_cavity} 
 \end{figure}
 It is often used to test numerical methods for fluid simulations as the velocities converge towards 
@@ -137,25 +148,22 @@ from \verb|cuSolverRF| which works on the GPU.
 \subsection{Benchmarks}
 To speed up the solving of the system belonging to equation \ref{eq:intermediate_step} we use 
 the QR and cuDSS solvers, while
-the second system is only accelerated using the RF solver, as this is the only one that allows 
+the second system is only accelerated using the RF solver, as this is the only solver that allows 
 for preprocessing. 
 The execution time of the programs, when using different solvers can be seen in the
 figure \ref{fig:lidDriven_time}.
 
 We can see that the lid driven cavity version which is the reference CPU implementation 
-is the slowest, except possibly right at the beginning, where there is still not that much 
-parallelism, so the CPU better single thread performance gives it an advantage. 
+is the fastest at the start, when the matrices are smaller and the CPU's better single 
+thread performance results in better overall performance.
 
-The second-best case is when we use the QR solver to solve the system of \ref{eq:intermediate_step}.
-It starts of a bit slower than the CPU version but quickly becomes faster, as the 
-size of the problem and the potential for parallelism increases.
+Afterwards, the solver that uses the cuDSS library for the system of the equation \ref{eq:intermediate_step} 
+becomes the fastest, with the difference increasing for larger \(N\). The cuDSS library has also been 
+created the most recently, so it might also be leveraging more modern GPU features than the other versions.
 
-The best case is when using the cuDSS solver to solve the system with the equation 
-\ref{eq:intermediate_step}. For large 
-enough \(N\) the performance increase seem to be about 100x, which is far better than even 
-the QR solver. This could be either because the cuDSS library is made for a newer version of 
-CUDA and so uses more modern features or maybe the QR decomposition has more zero fill-in
-which would result in a slower execution time. 
+The worst case is when we use the QR solver to solve the system of \ref{eq:intermediate_step}.
+This could be due to the fact that it uses a sparse QR decomposition instead of a sparse LU decomposition
+and the structure of the matrix does not lend itself to efficient QR decompositions.
 
 The last case uses the cuDSS solver for the system belonging to \ref{eq:intermediate_step} 
 and the RF solver for the system belonging to \ref{eq:pressure_correction}. 
@@ -173,11 +181,41 @@ the LU decomposition is done on the CPU, so the setup time might take too long.
     \label{fig:lidDriven_time} 
 \end{figure}
 
-From the figure \ref{fig:lidDriven_convergence} at the end of the report we can see that the 
-method converges toward some fixed value, which is what we expected. As a sanity check we can 
-also look at \ref{fig:lidDrivenACM_cross} which tells us that the final velocities at the 
-middle line match for all implementations.
-
+From the figure \ref{fig:lidDriven_comp} we can see that for all methods the slowest part is 
+the solving of the system for \ref{eq:intermediate_step}. In the case of the RF solver we can also 
+clearly see that the RF solver slows down the execution. We can also conclude that focusing on 
+speeding up the execution of the system of \ref{eq:intermediate_step} makes the most sense,
+as other parts are relatively faster.
+\begin{figure}[h!] 
+    \centering 
+    \includegraphics[width=\textwidth]{plots/lidDriven_comp.png} 
+    \caption{Comparison of how much time different parts of the program take for different methods.} 
+    \label{fig:lidDriven_comp} 
+\end{figure}
+From the figure \ref{fig:lidDriven_convergence}, for the specific case where the matrices 
+are of size \(N = 6208\), we can see that the 
+method converges toward some fixed value, which is what we expected. 
+We can also check that for the case of \(N = 4570\) the magnitude of velocities at the middle cross-section 
+match between all implementations. To see that the methods converge to the same final value of 
+max \(u_y\) we can also look at \ref{fig:lidDriven_conv}.
+\begin{figure}[h!] 
+    \centering 
+    \includegraphics[width=0.8\textwidth]{plots/lidDriven_conv.png} 
+    \caption{Graph of the final max $u_y$ with regard to the problem size using the pressure projection method.} 
+    \label{fig:lidDriven_conv} 
+\end{figure}
+\begin{figure}[h!] 
+    \centering 
+    \includegraphics[width=0.8\textwidth]{plots/lidDriven_convergence.png} 
+    \caption{Graph of max $u_y$ in regard to number of steps taken using the pressure projection method.} 
+    \label{fig:lidDriven_convergence} 
+\end{figure}
+\begin{figure}[h!] 
+    \centering 
+    \includegraphics[width=0.8\textwidth]{plots/lidDriven_cross.png} 
+    \caption{Graph of velocities at the middle line after 50 seconds using the pressure projection method.} 
+    \label{fig:lidDriven_cross} 
+\end{figure}
 \section{Artificial compressibility method}
 For the artificial compressibility method we use the explicit Euler method to solve 
 \begin{equation}
@@ -277,18 +315,7 @@ as it is currently setup specifically for the server, which was used for the pro
     on an irregular domain, Advances in engineering software, vol. 120, 2018
     DOI: 10.1016/j.advengsoft.2016.05.010
 \end{thebibliography}
-\begin{figure}[h!] 
-    \centering 
-    \includegraphics[width=0.8\textwidth]{plots/lidDriven_convergence.png} 
-    \caption{Graph of max $u_y$ in regard to number of steps taken using the implicit method.} 
-    \label{fig:lidDriven_convergence} 
-\end{figure}
-\begin{figure}[h!] 
-    \centering 
-    \includegraphics[width=0.8\textwidth]{plots/lidDriven_cross.png} 
-    \caption{Graph of velocities at the middle line after 50 seconds using the implicit method.} 
-    \label{fig:lidDriven_cross} 
-\end{figure}
+
 \begin{figure}[h!] 
     \centering 
     \includegraphics[width=0.8\textwidth]{plots/lidDrivenACM_convergence.png} 
