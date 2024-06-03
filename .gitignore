@@ -33,7 +33,6 @@
 
 # Extra folders
 build/
-*.h5
 bin/
 params/benchmark/
 

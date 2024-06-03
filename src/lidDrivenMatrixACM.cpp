@@ -231,7 +231,7 @@ class LidDrivenMatrixACM {
                                         "setup",
                                         "compression",
                                         "u = u + dt / Re * lap * u",
-                                        "derivative stack correction",
+                                        "advection",
                                         "PV correction",
                                         "max_norm",
                                         "p",

@@ -261,7 +261,7 @@ int main(int arg_num, char* arg[]) {
                 LidDriven<SolverDSS, SolverRF, Eigen::RowMajor, Eigen::RowMajor, 2>
                     solution(params);
             } else {
-                LidDriven<SparseLUWrapper, SparseLUWrapper, Eigen::ColMajor, Eigen::ColMajor, 2>
+                LidDriven<SparseLUWrapper, SparseLUWrapper, Eigen::RowMajor, Eigen::ColMajor, 2>
                     solution(params);
             }
             break;
@@ -277,7 +277,7 @@ int main(int arg_num, char* arg[]) {
                 LidDriven<SolverDSS, SolverRF, Eigen::RowMajor, Eigen::RowMajor, 3>
                     solution(params);
             } else {
-                LidDriven<SparseLUWrapper, SparseLUWrapper, Eigen::ColMajor, Eigen::ColMajor, 3>
+                LidDriven<SparseLUWrapper, SparseLUWrapper, Eigen::RowMajor, Eigen::ColMajor, 3>
                     solution(params);
             }
             break;

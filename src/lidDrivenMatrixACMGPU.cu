@@ -370,7 +370,7 @@ class LidDrivenMatrixACM {
             cudaDeviceSynchronize();
             s.stop("u = u + dt / Re * lap * u");
 
-            s.start("derivative stack correction");
+            s.start("advection");
             for (int var = 0; var < dim; ++var) {  // Complication to remain general in dimensions.
                                                    // Can be written explicitly.
                 derivative_u[var](streams_lhs[var]);
@@ -392,7 +392,7 @@ class LidDrivenMatrixACM {
                                   u_partial_lhs[var].value_ptr.end(), d_u_partial.value_ptr.begin(),
                                   d_u_partial.value_ptr.begin(), axpy_functor(-1));
             }
-            s.stop("derivative stack correction");
+            s.stop("advection");
             scal_t max_norm, max_div;
             int p_iter;
             cudaDeviceSynchronize();
@@ -403,6 +403,7 @@ class LidDrivenMatrixACM {
                              d_u.value_ptr.begin());
 
                 grad_p_p(default_stream);
+                cudaDeviceSynchronize();
                 s.stop("PV correction");
                 s.start("max_norm");
                 thrust::copy(d_u.value_ptr.begin(), d_u.value_ptr.end(), d_u2.value_ptr.begin());
@@ -467,7 +468,7 @@ class LidDrivenMatrixACM {
                                         "setup",
                                         "gpu setup",
                                         "u = u + dt / Re * lap * u",
-                                        "derivative stack correction",
+                                        "advection",
                                         "PV correction",
                                         "max_norm",
                                         "p",
