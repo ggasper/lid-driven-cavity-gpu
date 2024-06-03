@@ -421,6 +421,7 @@ class LidDrivenMatrixACM {
                                   d_p.value_ptr.begin(), d_p_temp.value_ptr.begin(),
                                   axpy_functor(-C * C * dt));
                 neumann_p(default_stream);
+                cudaDeviceSynchronize();
                 s.stop("p");
                 s.start("max_div");
                 thrust::transform(d_divergence.value_ptr.begin(), d_divergence.value_ptr.end(),
