@@ -59,3 +59,5 @@ params/benchmark/
 *.fdb_latexmk
 *.synctex.gz
 *.xdv
+
+.conda

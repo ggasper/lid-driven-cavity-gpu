@@ -1,0 +1,38 @@
+cmake_minimum_required(VERSION 3.16)
+
+# add_subdirectory($ENV{HOME}/medusa medusa)
+# include_directories($ENV{HOME}/medusa/include/)
+
+# set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin)
+enable_language(CUDA)
+# set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin)
+set(CMAKE_CXX_STANDARD 17)
+# add_compile_options(-Wall -O3 -fopenmp)
+
+
+# include_directories($ENV{CONDA_PREFIX}/include)
+# link_directories($ENV{CONDA_PREFIX}/lib)
+# list(APPEND CMAKE_PREFIX_PATH ${CMAKE_SOURCE_DIR}/.conda/)
+find_package(CUDA)
+# find_package(CUDAToolkit REQUIRED)
+# set(CUDA_TOOLKIT_ROOT_DIR)
+set(CMAKE_CUDA_ARCHITECTURES 86)
+
+include_directories($ENV{HOME}/libcudss-linux-x86_64-0.2.0.12_cuda12-archive/include)
+link_directories($ENV{HOME}/libcudss-linux-x86_64-0.2.0.12_cuda12-archive/lib)
+
+function(register name)
+    add_executable(${name} ${name}.cpp)
+    target_link_libraries(${name} medusa hdf5 gomp cusparse cudart cusolver cudss cublas)
+    target_compile_options(${name} PRIVATE -fopenmp -std=c++17 -O3)
+    target_include_directories(${name} PRIVATE solvers)
+endfunction(register)
+
+function(registerCuda name)
+    add_executable(${name} ${name}.cu)
+    target_link_libraries(${name} medusa hdf5 gomp cusparse cudart cusolver cudss cublas)
+    target_compile_options(${name} PRIVATE -fopenmp -std=c++17 -O3)
+    target_include_directories(${name} PRIVATE solvers)
+endfunction(registerCuda)
+register(lidDriven)
+registerCuda(lidDrivenMatrixACMGPU)
