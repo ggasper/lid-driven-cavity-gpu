@@ -1,8 +1,9 @@
 #include <iostream>
 #include <medusa/Medusa.hpp>
+// #include <omp.h>
 #include <Eigen/SparseLU>
 #include <chrono>
-
+#include <sycl/sycl.hpp>
 #define EPS 1e-10
 
 using namespace mm;
@@ -77,12 +78,15 @@ class LidDrivenACM {
         auto k = param_file.get<int>("num.phs_order");
         Monomials<vec_t> mon(param_file.get<int>("num.mon_order"));
         int support_size = std::round(param_file.get<scal_t>("num.support_size_factor") * mon.size());
+
         mm::RBFFD<Polyharmonic<scal_t>, vec_t, ScaleToClosest> rbffd(k, mon);
 
         domain.findSupport(FindClosest(support_size).forNodes(interior));
         domain.findSupport(FindClosest(support_size).forNodes(boundary).searchAmong(interior).forceSelf(true));
 
+        std::cout << domain << std::endl;
         auto storage = domain.template computeShapes<sh::lap | sh::grad>(rbffd);
+        std::cout << "here?" << std::endl;
         auto op_e_v = storage.explicitVectorOperators();
         auto op_e_s = storage.explicitOperators();
 
@@ -164,6 +168,8 @@ class LidDrivenACM {
 
 // The path to .xml parameter file required as a command line parameter
 int main(int arg_num, char* arg[]) {
+    sycl::queue my_gpu_queue(sycl::gpu_selector_v);
+    std::cout << "Selected device: " << my_gpu_queue.get_device().get_info<sycl::info::device::name>() << "\n";
     if (arg_num < 2) {
         throw std::invalid_argument("Missing command line argument. Provide path to .xml configuration.");
     } else if (arg_num > 2) {

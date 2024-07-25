@@ -2,24 +2,33 @@ cmake_minimum_required(VERSION 3.16)
 project(lid_driven_gpu)
 set(CMAKE_BUILD_TYPE Debug)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin)
-
+set(MEDUSA_DIRECTORY ${CMAKE_SOURCE_DIR}/includes/medusa)
 # add_compile_options(--gcc-install-dir=$ENV{CONDA_PREFIX}/lib/gcc/x86_64-conda-linux-gnu/12.4.0)
-
-add_subdirectory($ENV{HOME}/medusa medusa)
-include_directories($ENV{HOME}/medusa/include/)
+include(ExternalProject)
+ExternalProject_Add(
+    medusadownload
+    GIT_REPOSITORY "https://gitlab.com/e62Lab/medusa.git"
+    GIT_TAG "dev"
+    SOURCE_DIR "${CMAKE_SOURCE_DIR}/includes/medusa"
+    CONFIGURE_COMMAND ""
+    BUILD_COMMAND ""
+    INSTALL_COMMAND ""
+)
+add_subdirectory(${MEDUSA_DIRECTORY} medusa)
+include_directories(${MEDUSA_DIRECTORY}/include/)
 # required due to weird hdf5 installation
-# if (IS_DIRECTORY "/usr/include/hdf5/serial/")
-#     include_directories("/usr/include/hdf5/serial/")
-# elseif (IS_DIRECTORY "/usr/local/opt/hdf5/include/")
-#     include_directories("/usr/local/opt/hdf5/include/")
-#     link_directories("/usr/local/opt/hdf5/lib/")
-# endif ()
+if (IS_DIRECTORY "/usr/include/hdf5/serial/")
+    include_directories("/usr/include/hdf5/serial/")
+elseif (IS_DIRECTORY "/usr/local/opt/hdf5/include/")
+    include_directories("/usr/local/opt/hdf5/include/")
+    link_directories("/usr/local/opt/hdf5/lib/")
+endif ()
 
-# link_directories(/usr/lib/x86_64-linux-gnu/hdf5/serial/)
-# link_directories(/usr/lib/x86_64-linux-gnu/)
+link_directories(/usr/lib/x86_64-linux-gnu/hdf5/serial/)
+link_directories(/usr/lib/x86_64-linux-gnu/)
 set(CMAKE_CXX_STANDARD 17)
-add_subdirectory(src/cuda)
 add_subdirectory(src/cpu)
+add_subdirectory(src/cuda)
 add_subdirectory(src/sycl)
 # set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin/test)
 # set(CMAKE_CXX_STANDARD 17)

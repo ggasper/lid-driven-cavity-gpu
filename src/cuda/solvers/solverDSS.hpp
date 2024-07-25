@@ -1,6 +1,6 @@
 #pragma once
 #include <cuda_runtime_api.h>
-#include <cuDSS.h>
+#include <cudss.h>
 #include <Eigen/Sparse>
 
 class SolverDSS {
