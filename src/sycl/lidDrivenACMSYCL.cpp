@@ -6,9 +6,41 @@
 #include <sycl/sycl.hpp>
 #include <numeric>
 #include <vector>
+#include <mkl.h>
 #define EPS 1e-10
 
 using namespace mm;
+template <typename scal_t, int dim>
+class VectorFieldDevice {
+    scal_t* u_;
+    int n_;
+
+  public:
+    VectorFieldDevice(const VectorField<scal_t, dim>& u, sycl::queue& q) : n_(u.rows()) {
+        u_ = sycl::malloc_shared<scal_t>(u.size(), q);
+        q.submit([&](sycl::handler& h) {
+             h.memcpy(u_, &u.begin()[0], u.size() * sizeof(scal_t));
+         }).wait();
+    }
+    int rows() const { return n_; }
+    scal_t* begin() const { return u_; }
+    int size() { return dim * n_; }
+};
+template <typename scalar_t>
+sycl::event lap_device(sycl::queue& q, int* support, int support_start, int support_size,
+                       scalar_t* shape, scalar_t* u, scalar_t* res, int dim, int u_size,
+                       const std::vector<sycl::event>& depends_on = {}) {
+    return q.submit([&](sycl::handler& h) {
+        h.depends_on(depends_on);
+        *res = 0.0;
+        auto red = sycl::reduction(res, sycl::plus<>());
+        h.parallel_for(support_size, red, [=](sycl::id<1> idx, auto& tmp) {
+            tmp += shape[support_start + idx] * u[support[support_start + idx] + u_size * dim];
+            // tmp += support[support_start + idx];
+            // tmp += 1;  // shape[support_start + idx];
+        });
+    });
+}
 template <typename vec_t,
           typename OpFamilies = std::tuple<Lap<vec_t::dim>, Der1s<vec_t::dim>, Der2s<vec_t::dim>>>
 class RaggedShapeStorageDevice {
@@ -22,15 +54,22 @@ class RaggedShapeStorageDevice {
     int* support_;
     std::vector<scalar_t*> shapes_;
 
+    Range<int> support_starts_;
+    Range<int> support_sizes_;
+    int total_size_;
+
   public:
     RaggedShapeStorageDevice(RaggedShapeStorage<vec_t, OpFamilies> storage, sycl::queue& q) {
         q_ = &q;
         auto support_sizes = storage.supportSizes();
+        support_sizes_ = support_sizes;
         int size = std::reduce(support_sizes.begin(), support_sizes.end());
-        support_ = sycl::malloc_device<int>(size, *q_);
+        total_size_ = size;
+        support_ = sycl::malloc_shared<int>(size, *q_);
         int j = 0;
         for (int i = 0; i < storage.size(); ++i) {
             auto vec = storage.support(i);
+            support_starts_.push_back(j);
             q.submit([&](sycl::handler& h) {
                 h.memcpy(&support_[j], &vec.begin()[0], vec.size() * sizeof(int));
             });
@@ -38,13 +77,59 @@ class RaggedShapeStorageDevice {
         }
         for (int i = 0; i < storage.shapes().size(); ++i) {
             auto& shape = storage.shapes()[i];
-            shapes_.emplace_back(sycl::malloc_device<scalar_t>(shape.size(), *q_));
+            shapes_.emplace_back(sycl::malloc_shared<scalar_t>(shape.size(), *q_));
             q.submit([&](sycl::handler& h) {
                 h.memcpy(shapes_[i], &shape[0], shape.size() * sizeof(scalar_t));
             });
         }
+
         q.wait();
     }
+    scalar_t laplace(int node, int j) const {
+        int laplace_index = tuple_index<Lap<vector_t::dim>, op_families_tuple>::value;
+        return shapes_[laplace_index][support_starts_[node] + j];
+    }
+    scalar_t d1(int var, int node, int j) const {
+        int d1_index = tuple_index<Der1s<vector_t::dim>, op_families_tuple>::value;
+        auto op = Der1s<vector_t::dim>::index(Der1<vector_t::dim>(var));
+        return shapes_[d1_index][op * total_size_ + support_starts_[node] + j];
+    }
+    // scalar_t* lap(scalar_t* u, int u_size, int i) {
+    //     int laplace_index = tuple_index<Lap<vector_t::dim>, op_families_tuple>::value;
+    //     // for (int j = 0; j < support_sizes_[i]; ++j)
+    //     scalar_t* lap_res = sycl::malloc_shared<scalar_t>(dim, *q_);
+    //     int support_start = support_starts_[i];
+    //     size_t support_size = support_sizes_[i];
+    //     scalar_t* shape = shapes_[laplace_index];
+    //     for (int d = 0; d < dim; ++d) {
+    //         lap_device(*q_, support_, support_start, support_size, shape, u, &lap_res[d], d,
+    //         u_size)
+    //             .wait();
+    //     }
+    //     return lap_res;
+    // }
+    std::vector<sycl::event> lap(VectorFieldDevice<scalar_t, dim>& u, int i, scalar_t* res,
+                                 const std::vector<sycl::event>& depends_on = {}) const {
+        std::vector<sycl::event> events = {};
+        for (int d = 0; d < dim; ++d) {
+            int laplace_index = tuple_index<Lap<vector_t::dim>, op_families_tuple>::value;
+            int support_start = support_starts_[i];
+            size_t support_size = support_sizes_[i];
+            scalar_t* shape = shapes_[laplace_index];
+            int* support = support_;
+            events.push_back(q_->submit([&](sycl::handler& h) {
+                h.depends_on(depends_on);
+                res[d] = 0;
+                auto scalar_prod = sycl::reduction(&res[d], sycl::plus<>());
+                h.parallel_for(support_size, scalar_prod, [=](sycl::id<1> idx, auto& tmp) {
+                    tmp += shape[support_start + idx] *
+                           u.begin()[support[support_start + idx] + u.rows() * d];
+                });
+            }));
+        }
+        return events;
+    }
+    int support(int node, int j) const { return support_[support_starts_[node] + j]; }
     ~RaggedShapeStorageDevice() {
         sycl::free(support_, *q_);
         for (int i = 0; i < num_operators; ++i) {
@@ -151,10 +236,29 @@ class LidDrivenACM {
         Eigen::VectorXd max_u_y(num_print);
         int iteration = 0;
         while (t < end_time) {
-            // #pragma omp parallel for default(none) schedule(static) shared(interior, u_partial,
-            // u, dt, op_e_v, Re)
+            // #pragma omp parallel for default(none) schedule(static) shared(interior,
+            // u_partial, u, dt, op_e_v, Re)
             for (int _ = 0; _ < interior.size(); ++_) {
                 int i = interior[_];
+                // scal_t* u_device = sycl::malloc_shared<scal_t>(u.size(), q);
+                // q.submit([&](sycl::handler& h) {
+                //      h.memcpy(u_device, &u.begin()[0], u.size() * sizeof(scal_t));
+                //  }).wait();
+                VectorFieldDevice<scal_t, dim> u_device{u, q};
+                std::cout << op_e_v.lap(u, i) << std::endl;
+                // scal_t* lap_device = storage_device.lap(u_device.begin(), u.rows(), i);
+                scal_t* lap_device = sycl::malloc_shared<scal_t>(dim, q);
+
+                auto events = storage_device.lap(u_device, i, lap_device);
+
+                for (auto event : events) {
+                    event.wait();
+                }
+                std::cout << "[";
+                for (int j = 0; j < dim; ++j) {
+                    std::cout << lap_device[j] << " ";
+                }
+                std::cout << "]\n";
                 u_partial[i] = u[i] + dt * (op_e_v.lap(u, i) / Re - op_e_v.grad(u, i) * u[i]);
             }
             scal_t max_norm;
@@ -172,8 +276,8 @@ class LidDrivenACM {
                 }
                 scal_t C = compress * std::max(max_norm, v_ref);
                 max_div = 0;
-                // #pragma omp parallel for default(none) schedule(static) shared(interior, op_e_v,
-                // u, p, p_new, p_old, C, dt, op_e_s, Re) reduction(max : max_div)
+                // #pragma omp parallel for default(none) schedule(static) shared(interior,
+                // op_e_v, u, p, p_new, p_old, C, dt, op_e_s, Re) reduction(max : max_div)
                 for (int _ = 0; _ < interior.size(); ++_) {
                     int i = interior[_];
                     scal_t div = op_e_v.div(u, i);
