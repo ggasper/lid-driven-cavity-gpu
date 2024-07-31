@@ -129,6 +129,30 @@ class RaggedShapeStorageDevice {
         }
         return events;
     }
+    std::vector<sycl::event> div(VectorFieldDevice<scalar_t, dim>& u, int i, scalar_t* res,
+                                 const std::vector<sycl::event>& depends_on = {}) const {
+        std::vector<sycl::event> events = {};
+        int d1_index = tuple_index<Der1s<vector_t::dim>, op_families_tuple>::value;
+        // auto d1_op = Der1s<vector_t::dim>::index(Der1<vector_t::dim>(var));
+        int support_start = support_starts_[i];
+        size_t support_size = support_sizes_[i];
+        int total_size = total_size_;
+        scalar_t* shape = shapes_[d1_index];
+        int* support = support_;
+        events.push_back(q_->submit([&](sycl::handler& h) {
+            h.depends_on(depends_on);
+            *res = 0;
+            auto div_sum = sycl::reduction(res, sycl::plus<>());
+            h.parallel_for(sycl::range{dim, support_size}, div_sum,
+                           [=](sycl::id<2> idx, auto& tmp) {
+                               int d = idx[0];
+                               int i = idx[1];
+                               tmp += shape[d * total_size + support_start + i] *
+                                      u.begin()[support[support_start + i] + u.rows() * d];
+                           });
+        }));
+        return events;
+    }
     int support(int node, int j) const { return support_[support_starts_[node] + j]; }
     ~RaggedShapeStorageDevice() {
         sycl::free(support_, *q_);
@@ -244,21 +268,21 @@ class LidDrivenACM {
                 // q.submit([&](sycl::handler& h) {
                 //      h.memcpy(u_device, &u.begin()[0], u.size() * sizeof(scal_t));
                 //  }).wait();
-                VectorFieldDevice<scal_t, dim> u_device{u, q};
-                std::cout << op_e_v.lap(u, i) << std::endl;
-                // scal_t* lap_device = storage_device.lap(u_device.begin(), u.rows(), i);
-                scal_t* lap_device = sycl::malloc_shared<scal_t>(dim, q);
+                // VectorFieldDevice<scal_t, dim> u_device{u, q};
+                // std::cout << op_e_v.lap(u, i) << std::endl;
+                // // scal_t* lap_device = storage_device.lap(u_device.begin(), u.rows(), i);
+                // scal_t* lap_device = sycl::malloc_shared<scal_t>(dim, q);
 
-                auto events = storage_device.lap(u_device, i, lap_device);
+                // auto events = storage_device.lap(u_device, i, lap_device);
 
-                for (auto event : events) {
-                    event.wait();
-                }
-                std::cout << "[";
-                for (int j = 0; j < dim; ++j) {
-                    std::cout << lap_device[j] << " ";
-                }
-                std::cout << "]\n";
+                // for (auto event : events) {
+                //     event.wait();
+                // }
+                // std::cout << "[";
+                // for (int j = 0; j < dim; ++j) {
+                //     std::cout << lap_device[j] << " ";
+                // }
+                // std::cout << "]\n";
                 u_partial[i] = u[i] + dt * (op_e_v.lap(u, i) / Re - op_e_v.grad(u, i) * u[i]);
             }
             scal_t max_norm;
@@ -281,6 +305,14 @@ class LidDrivenACM {
                 for (int _ = 0; _ < interior.size(); ++_) {
                     int i = interior[_];
                     scal_t div = op_e_v.div(u, i);
+                    std::cout << "ori: " << div << '\n';
+                    VectorFieldDevice<scal_t, dim> u_device{u, q};
+                    scal_t* res = sycl::malloc_shared<scal_t>(1, q);
+                    auto events = storage_device.div(u_device, i, res);
+                    for (auto event : events) {
+                        event.wait();
+                    }
+                    std::cout << "new: " << *res << '\n';
                     max_div = std::max(std::abs(div), max_div);
                     p[p_new][i] =
                         p[p_old][i] - C * C * dt * div;  // + dt * op_e_s.lap(p[p_old], i) / Re;
