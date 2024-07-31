@@ -26,21 +26,21 @@ class VectorFieldDevice {
     scal_t* begin() const { return u_; }
     int size() { return dim * n_; }
 };
-template <typename scalar_t>
-sycl::event lap_device(sycl::queue& q, int* support, int support_start, int support_size,
-                       scalar_t* shape, scalar_t* u, scalar_t* res, int dim, int u_size,
-                       const std::vector<sycl::event>& depends_on = {}) {
-    return q.submit([&](sycl::handler& h) {
-        h.depends_on(depends_on);
-        *res = 0.0;
-        auto red = sycl::reduction(res, sycl::plus<>());
-        h.parallel_for(support_size, red, [=](sycl::id<1> idx, auto& tmp) {
-            tmp += shape[support_start + idx] * u[support[support_start + idx] + u_size * dim];
-            // tmp += support[support_start + idx];
-            // tmp += 1;  // shape[support_start + idx];
-        });
-    });
-}
+template <typename scal_t>
+class ScalarFieldDevice {
+    scal_t* u_;
+    int n_;
+
+  public:
+    ScalarFieldDevice(const ScalarField<scal_t>& u, sycl::queue& q) : n_(u.size()) {
+        u_ = sycl::malloc_shared<scal_t>(u.size(), q);
+        q.submit([&](sycl::handler& h) {
+             h.memcpy(u_, &u.begin()[0], u.size() * sizeof(scal_t));
+         }).wait();
+    }
+    scal_t* begin() const { return u_; }
+    int size() { return n_; }
+};
 template <typename vec_t,
           typename OpFamilies = std::tuple<Lap<vec_t::dim>, Der1s<vec_t::dim>, Der2s<vec_t::dim>>>
 class RaggedShapeStorageDevice {
@@ -94,20 +94,7 @@ class RaggedShapeStorageDevice {
         auto op = Der1s<vector_t::dim>::index(Der1<vector_t::dim>(var));
         return shapes_[d1_index][op * total_size_ + support_starts_[node] + j];
     }
-    // scalar_t* lap(scalar_t* u, int u_size, int i) {
-    //     int laplace_index = tuple_index<Lap<vector_t::dim>, op_families_tuple>::value;
-    //     // for (int j = 0; j < support_sizes_[i]; ++j)
-    //     scalar_t* lap_res = sycl::malloc_shared<scalar_t>(dim, *q_);
-    //     int support_start = support_starts_[i];
-    //     size_t support_size = support_sizes_[i];
-    //     scalar_t* shape = shapes_[laplace_index];
-    //     for (int d = 0; d < dim; ++d) {
-    //         lap_device(*q_, support_, support_start, support_size, shape, u, &lap_res[d], d,
-    //         u_size)
-    //             .wait();
-    //     }
-    //     return lap_res;
-    // }
+
     std::vector<sycl::event> lap(VectorFieldDevice<scalar_t, dim>& u, int i, scalar_t* res,
                                  const std::vector<sycl::event>& depends_on = {}) const {
         std::vector<sycl::event> events = {};
@@ -150,6 +137,68 @@ class RaggedShapeStorageDevice {
                                tmp += shape[d * total_size + support_start + i] *
                                       u.begin()[support[support_start + i] + u.rows() * d];
                            });
+        }));
+        return events;
+    }
+    std::vector<sycl::event> grad(ScalarFieldDevice<scalar_t>& u, int i, scalar_t* res,
+                                  const std::vector<sycl::event>& depends_on = {}) const {
+        std::vector<sycl::event> events = {};
+        for (int d = 0; d < dim; ++d) {
+            int d1_index = tuple_index<Der1s<vector_t::dim>, op_families_tuple>::value;
+            int support_start = support_starts_[i];
+            size_t support_size = support_sizes_[i];
+            scalar_t* shape = shapes_[d1_index];
+            int total_size = total_size_;
+            int* support = support_;
+            events.push_back(q_->submit([&](sycl::handler& h) {
+                h.depends_on(depends_on);
+                res[d] = 0;
+                auto scalar_prod = sycl::reduction(&res[d], sycl::plus<>());
+                h.parallel_for(support_size, scalar_prod, [=](sycl::id<1> idx, auto& tmp) {
+                    tmp += shape[d * total_size + support_start + idx] *
+                           u.begin()[support[support_start + idx]];
+                });
+            }));
+        }
+        return events;
+    }
+    std::vector<sycl::event> neumann(ScalarFieldDevice<scalar_t>& u, int i, scalar_t* normal,
+                                     scalar_t* res,
+                                     const std::vector<sycl::event>& depends_on = {}) const {
+        std::vector<sycl::event> events = {};
+        int d1_index = tuple_index<Der1s<vector_t::dim>, op_families_tuple>::value;
+        // auto d1_op = Der1s<vector_t::dim>::index(Der1<vector_t::dim>(var));
+        int support_start = support_starts_[i];
+        size_t support_size = support_sizes_[i];
+        int total_size = total_size_;
+        scalar_t* shape = shapes_[d1_index];
+        int* support = support_;
+        scalar_t* val = sycl::malloc_shared<scalar_t>(1, *q_);
+        scalar_t* denominator = sycl::malloc_shared<scalar_t>(1, *q_);
+        *val = *res;
+        *denominator = 0;
+        auto val_event = q_->submit([&](sycl::handler& h) {
+            h.depends_on(depends_on);
+            auto sum = sycl::reduction(val, sycl::plus<>());
+            h.parallel_for(sycl::range{dim, support_size - 1}, sum,
+                           [=](sycl::id<2> idx, auto& tmp) {
+                               int d = idx[0];
+                               int j = idx[1] + 1;
+                               tmp += -normal[d] * shape[d * total_size + support_start + j] *
+                                      u.begin()[support[support_start + j]];
+                           });
+        });
+        auto denominator_event = q_->submit([&](sycl::handler& h) {
+            h.depends_on(depends_on);
+            h.single_task([=]() {
+                for (int d = 0; d < dim; ++d) {
+                    *denominator += normal[d] * shape[d * total_size + support_start];
+                }
+            });
+        });
+        events.push_back(q_->submit([&](sycl::handler& h) {
+            h.depends_on({val_event, denominator_event});
+            h.single_task([=]() { *res = *val / *denominator; });
         }));
         return events;
     }
@@ -249,6 +298,19 @@ class LidDrivenACM {
                   << "\n";
         RaggedShapeStorageDevice storage_device{storage, q};
 
+        int* boundry_map = sycl::malloc_shared<int>(domain.bmap().size(), q);
+        q.submit([&](sycl::handler& h) {
+             h.memcpy(&boundry_map[0], &domain.bmap().begin()[0],
+                      domain.bmap().size() * sizeof(int));
+         }).wait();
+        Range<scal_t*> normals_device = {};
+        for (auto normal : domain.normals()) {
+            normals_device.push_back(sycl::malloc_shared<scal_t>(normal.size(), q));
+            q.submit([&](sycl::handler& h) {
+                 h.memcpy(&normals_device.back()[0], &normal.begin()[0],
+                          normal.size() * sizeof(scal_t));
+             }).wait();
+        }
         scal_t t = 0;
         auto end_time = param_file.get<scal_t>("case.end_time");
         auto printout_interval = param_file.get<int>("output.printout_interval");
@@ -296,6 +358,7 @@ class LidDrivenACM {
                 for (int _ = 0; _ < interior.size(); ++_) {
                     int i = interior[_];
                     u[i] = u_partial[i] - dt * op_e_s.grad(p[p_old], i);
+
                     max_norm = std::max(u[i].norm(), max_norm);
                 }
                 scal_t C = compress * std::max(max_norm, v_ref);
@@ -305,14 +368,14 @@ class LidDrivenACM {
                 for (int _ = 0; _ < interior.size(); ++_) {
                     int i = interior[_];
                     scal_t div = op_e_v.div(u, i);
-                    std::cout << "ori: " << div << '\n';
-                    VectorFieldDevice<scal_t, dim> u_device{u, q};
-                    scal_t* res = sycl::malloc_shared<scal_t>(1, q);
-                    auto events = storage_device.div(u_device, i, res);
-                    for (auto event : events) {
-                        event.wait();
-                    }
-                    std::cout << "new: " << *res << '\n';
+                    // std::cout << "ori: " << div << '\n';
+                    // VectorFieldDevice<scal_t, dim> u_device{u, q};
+                    // scal_t* res = sycl::malloc_shared<scal_t>(1, q);
+                    // auto events = storage_device.div(u_device, i, res);
+                    // for (auto event : events) {
+                    // event.wait();
+                    // }
+                    // std::cout << "new: " << *res << '\n';
                     max_div = std::max(std::abs(div), max_div);
                     p[p_new][i] =
                         p[p_old][i] - C * C * dt * div;  // + dt * op_e_s.lap(p[p_old], i) / Re;
@@ -323,6 +386,17 @@ class LidDrivenACM {
                 for (int _ = 0; _ < boundary.size(); ++_) {
                     // Consider leaving one node constant to "fix" the pressure invariance
                     int i = boundary[_];
+                    std::cout << "orig: " << op_e_s.neumann(p[p_new], i, domain.normal(i), 0)
+                              << '\n';
+                    ScalarFieldDevice<scal_t> p_device{p[p_new], q};
+                    scal_t* res = sycl::malloc_shared<scal_t>(1, q);
+                    *res = 0;
+                    auto events =
+                        storage_device.neumann(p_device, i, normals_device[boundry_map[i]], res);
+                    for (auto event : events) {
+                        event.wait();
+                    }
+                    std::cout << "new: " << *res << '\n';
                     p[p_new][i] = op_e_s.neumann(p[p_new], i, domain.normal(i), 0);
                 }
                 if (max_div < div_limit) break;
