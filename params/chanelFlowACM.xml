@@ -1,5 +1,5 @@
 <params>
-    <num h="0.02"
+    <num h="0.002"
          cfl="0.5"
          support_size_factor="2"
          mon_order="2"
