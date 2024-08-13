@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22.1)
 project(lid_driven_gpu CXX)
-set(CMAKE_BUILD_TYPE Debug)
+set(CMAKE_BUILD_TYPE Release)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin)
 set(MEDUSA_DIRECTORY ${CMAKE_SOURCE_DIR}/includes/medusa)
 # add_compile_options(--gcc-install-dir=$ENV{CONDA_PREFIX}/lib/gcc/x86_64-conda-linux-gnu/12.4.0)
