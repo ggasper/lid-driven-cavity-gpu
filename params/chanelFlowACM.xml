@@ -11,7 +11,7 @@
          reference_velocity="1e-3"
     />
     <sys num_threads="4"
-          device="gpu"
+          device="cpu"
     />
     <case dim="2"
           Re="1000"
